@@ -44,7 +44,10 @@ ClassMethod ConvertToUseExtents(className As %String, shortGlobalNames As %Boole
 			}
 
 			// skip extent and IDKEY indices
-			continue:index.Properties=""
+			if (index.Properties="") {
+				write:verbose !,"   Skipping ",index.Type," index '",index.Name,"'"
+				continue
+			}
 
 			set testIndices(index.Name) = index.Properties
 			
@@ -66,7 +69,7 @@ ClassMethod ConvertToUseExtents(className As %String, shortGlobalNames As %Boole
 						}
 					}
 					quit:null
-					set subs(j) = val
+					set subs(j) = $s($isobject(val) && val.%Extends("%Library.Persistent"):val.%Id(), 1:val)
 				}
 				continue:null // ignore these rows for our test
 				if '$classmethod(className, index.Name_"Exists", subs...) {
@@ -80,6 +83,7 @@ ClassMethod ConvertToUseExtents(className As %String, shortGlobalNames As %Boole
 				write:verbose !,"   WARNING: no valid test data for index '",index.Name,"'"
 			}
 		}
+		quit:$$$ISERR(sc)
 		
 		// USEEXTENTSET class parameter
 		if 'isSubclass {
@@ -104,13 +108,12 @@ ClassMethod ConvertToUseExtents(className As %String, shortGlobalNames As %Boole
 		// Identify applicable storage definition and create a backup
 		set storage = ##class(%Dictionary.StorageDefinition).%OpenId(className_"||"_$s(class.StorageStrategy="":"Default", 1:class.StorageStrategy),,.sc)
 		quit:'$isobject(storage)
-		write:verbose !!,"Creating backup of current storage definition '",storage.Name,"'"
 		set backup = storage.%ConstructClone(0)
-		set backup.parent = class
 		set backup.Name = storage.Name_"Backup", i=""
 		while ##class(%Dictionary.StorageDefinition).%ExistsId(className_"||"_backup.Name) { 
 			set i = i+1, backup.Name = storage.Name_"Backup"_i
 		}
+		write:verbose !!,"Creating backup of current storage definition: '",backup.Name,"'"
 		set backup.parent = class
 		
 		// use base name minus D suffix as ExtentLocation
