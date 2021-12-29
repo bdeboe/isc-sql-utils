@@ -15,6 +15,7 @@ write ##class(SQL.StorageUtils).ConvertToUseExtentSets("My.Ancient.CustomerClass
 See the class method's argument list for more ways to weak what gets generated.
 
 Notes:
+* when trying to convert classes in a hierarchy, aim at the superclass defining the storage
 * this class does not (yet) provide an option to perform the described drop-and-recreate-indices procedure
 * a future version of this class may also move the data from that long-ish D global into a proper extent global
 
