@@ -9,7 +9,7 @@ ClassMethod ConvertToUseExtents(className As %String, shortGlobalNames As %Boole
 {
 	set sc = $$$OK
 	try {
-		set class = ##class(%Dictionary.ClassDefinition).%OpenId(className,,.sc)
+		set class = ##class(%Dictionary.ClassDefinition).%OpenId(className,4,.sc)
 		quit:'$isobject(class)
 		set compiledClass = ##class(%Dictionary.CompiledClass).%OpenId(className,,.sc)
 		quit:'$isobject(compiledClass)
@@ -105,7 +105,8 @@ ClassMethod ConvertToUseExtents(className As %String, shortGlobalNames As %Boole
 		set storage = ##class(%Dictionary.StorageDefinition).%OpenId(className_"||"_$s(class.StorageStrategy="":"Default", 1:class.StorageStrategy),,.sc)
 		quit:'$isobject(storage)
 		write:verbose !!,"Creating backup of current storage definition '",storage.Name,"'"
-		set backup = storage.%ConstructClone(1)
+		set backup = storage.%ConstructClone(0)
+		set backup.parent = class
 		set backup.Name = storage.Name_"Backup", i=""
 		while ##class(%Dictionary.StorageDefinition).%ExistsId(className_"||"_backup.Name) { 
 			set i = i+1, backup.Name = storage.Name_"Backup"_i
@@ -189,7 +190,7 @@ ClassMethod ConvertToUseExtents(className As %String, shortGlobalNames As %Boole
 			quit:index=""
 				
 			write:verbose !," - Verifying index '",index,"' on ",props
-			set id = ""
+			set id = "", c = 0
 			for {
 				set id = $order(testIndices(index,id))
 				quit:id=""
@@ -199,16 +200,24 @@ ClassMethod ConvertToUseExtents(className As %String, shortGlobalNames As %Boole
 					set sc = $$$ERROR($$$GeneralError, "Unable to retrieve row "_id_" using '",index,"' lookup")
 					quit
 				}
+				set c = c+1
 			}
+			write:verbose " - OK (",c," rows tested)"
 		}
 
 		// now check for subclasses
 		write:verbose !!,"Now checking for subclasses to convert"
-		set result = ##class(%SQL.Statement).%ExecDirect(,"SELECT Name FROM %Dictionary.CompiledClass WHERE ','||Super||',' LIKE '%,"_className_",%'")
+		set result = ##class(%SQL.Statement).%ExecDirect(,"SELECT Name FROM %Dictionary.CompiledClass WHERE ','||Super||',' LIKE '%,"_className_",%'"), c = 0
 		while result.%Next() {
 			set subclass = result.%GetData(1)
 			set sc = ..ConvertToUseExtents(subclass, shortGlobalNames, verbose)
 			quit:$$$ISERR(sc)
+			set c = c+1
+		}
+		if 'c {
+			write:verbose " - none"
+		} else {
+			write:verbose !!,"Converted ",c," subclasses for '",className,"'"
 		}
 
 	} catch (ex) {
