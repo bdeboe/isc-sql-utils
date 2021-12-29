@@ -15,6 +15,14 @@ ClassMethod ConvertToUseExtents(className As %String, shortGlobalNames As %Boole
 		quit:'$isobject(compiledClass)
 		write:verbose !,"Opening class definition for '",className,"'"
 
+		// check if the storage is defined in a parent class with USEEXTENTSET=0
+		set whoDefinesMyStorage = ..WhoDefinesMyStorage(className),
+			isSubclass = (whoDefinesMyStorage '= className)
+		if isSubclass && '##class(%Dictionary.CompiledParameter).%OpenId(whoDefinesMyStorage_"||USEEXTENTSET").Default {
+			set sc = $$$ERROR($$$GeneralError, "Parent class '"_whoDefinesMyStorage_"' has USEEXTENTSET=0 and is the one in need of conversion.")
+			quit
+		}
+
 		// build mini test set
 		write:verbose !!,"Building mini test set"
 		set tableName = $tr($p(className,".",1,*-1),".","_")_"."_compiledClass.SqlTableName
@@ -74,19 +82,23 @@ ClassMethod ConvertToUseExtents(className As %String, shortGlobalNames As %Boole
 		}
 		
 		// USEEXTENTSET class parameter
-		set param = ##class(%Dictionary.ParameterDefinition).%OpenId(className_"||USEEXTENTSET")
-		write:verbose !!,"Setting USEEXTENTSET class parameter to 1"
-		if $isobject(param) {
-			if param.Default=1 { // nothing to do!
-				write:verbose !,"Class '",className,"' already had USEEXTENTSET=1"
-				quit
-			} 
-			set param.Default = 1
+		if 'isSubclass {
+			set param = ##class(%Dictionary.ParameterDefinition).%OpenId(className_"||USEEXTENTSET")
+			write:verbose !!,"Setting USEEXTENTSET class parameter to 1"
+			if $isobject(param) {
+				if param.Default=1 { // nothing to do!
+					write:verbose !,"Class '",className,"' already had USEEXTENTSET=1"
+					quit
+				} 
+				set param.Default = 1
+			} else {
+				set param = ##class(%Dictionary.ParameterDefinition).%New()
+				set param.parent = class
+				set param.Name = "USEEXTENTSET"
+				set param.Default = 1
+			}
 		} else {
-			set param = ##class(%Dictionary.ParameterDefinition).%New()
-			set param.parent = class
-			set param.Name = "USEEXTENTSET"
-			set param.Default = 1
+			write:verbose !,"This is a subclass, inheriting USEEXTENTSET from '",whoDefinesMyStorage,"'"
 		}
 		
 		// Identify applicable storage definition and create a backup
@@ -109,14 +121,14 @@ ClassMethod ConvertToUseExtents(className As %String, shortGlobalNames As %Boole
 		write:verbose !!,"New extent location: ",storage.ExtentLocation
 		
 		// now add explicit mappings per index from the *compiled* class
-		set indexLocation = storage.IndexLocation
+		set compiledStorage = ##class(%Dictionary.CompiledStorage).%OpenId(className_"||"_storage.Name,,.sc)
+		quit:'$isobject(compiledStorage)
+		set indexLocation = compiledStorage.IndexLocation
 		if $e(indexLocation,*)=")" {
 			set indexLocation = $e(indexLocation,1,*-1)_","
 		} else {
 			set indexLocation = indexLocation_"("
 		}
-		set compiledStorage = ##class(%Dictionary.CompiledStorage).%OpenId(className_"||"_storage.Name,,.sc)
-		quit:'$isobject(compiledStorage)
 		
 		// first build a list of the ones with an existing explicit location
 		write:verbose !!,"Building a list of existing index locations"
@@ -133,7 +145,7 @@ ClassMethod ConvertToUseExtents(className As %String, shortGlobalNames As %Boole
 				set indexStorage = ##class(%Dictionary.StorageIndexDefinition).%New()
 				set indexStorage.parent = storage
 				set indexStorage.Name = index.Name
-				set indexStorage.Location = storage.DataLocation
+				set indexStorage.Location = compiledStorage.DataLocation
 				write:verbose !,"   - ",indexStorage.Name," (system assigned) > ", indexStorage.Location
 			} else {
 				set indexStorage = ##class(%Dictionary.StorageIndexDefinition).%New()
@@ -190,6 +202,15 @@ ClassMethod ConvertToUseExtents(className As %String, shortGlobalNames As %Boole
 			}
 		}
 
+		// now check for subclasses
+		write:verbose !!,"Now checking for subclasses to convert"
+		set result = ##class(%SQL.Statement).%ExecDirect(,"SELECT Name FROM %Dictionary.CompiledClass WHERE ','||Super||',' LIKE '%,"_className_",%'")
+		while result.%Next() {
+			set subclass = result.%GetData(1)
+			set sc = ..ConvertToUseExtents(subclass, shortGlobalNames, verbose)
+			quit:$$$ISERR(sc)
+		}
+
 	} catch (ex) {
 		set sc = ex.AsStatus()
 	}
@@ -199,6 +220,32 @@ ClassMethod ConvertToUseExtents(className As %String, shortGlobalNames As %Boole
 		write !
 	}
 	quit sc
+}
+
+/// Helper method for ConvertToUseExtentSet()
+ClassMethod WhoDefinesMyStorage(className As %String) As %String [ Internal ]
+{
+	// we're looking for the parent class that defines this class' extent / storage
+	set class = ##class(%Dictionary.CompiledClass).%OpenId(className)
+
+	// look at primary superclass only
+	set super = $s(class.Inheritance="left":$p(class.Super,",",1), 1:$p(class.Super,",",*))
+	
+	// if this superclass isn't a %Persistent class, no need to dig any further.
+	// the current class must be the one defining the extent
+	if '$classmethod(super, "%Extends", "%Library.Persistent") {
+		quit className
+	}
+	
+	// if this superclass has NoExtent, no need to dig any further.
+	// the current class must be the one defining the extent
+	set superclass = ##class(%Dictionary.CompiledClass).%OpenId(super)
+	if superclass.NoExtent {
+		quit className
+	}
+
+	// if neither of these conditions hold, we need to look up super
+	quit ..WhoDefinesMyStorage(super)
 }
 
 /// Creates a table <var>targetTableName</var> in the current namespace that maps to the same
