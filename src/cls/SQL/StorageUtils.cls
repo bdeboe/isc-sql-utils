@@ -5,17 +5,63 @@ Class SQL.StorageUtils
 /// USEEXTENTSET=1 class parameter and adapts the storage definition to match the class'
 /// existing globals so that everything remains accessible and any *new* storage maps
 /// (notably indices) are written in the USEEXTENTSET=1 way.
-ClassMethod ConvertToUseExtents(className As %String, shortGlobalNames As %Boolean = 0) As %Status
+ClassMethod ConvertToUseExtents(className As %String, shortGlobalNames As %Boolean = 0, verbose As %Boolean = 1) As %Status
 {
 	set sc = $$$OK
 	try {
 		set class = ##class(%Dictionary.ClassDefinition).%OpenId(className,,.sc)
 		quit:'$isobject(class)
+		set compiledClass = ##class(%Dictionary.CompiledClass).%OpenId(className,,.sc)
+		quit:'$isobject(compiledClass)
+		write:verbose !,"Opening class definition for '",className,"'"
+
+		// build mini test set
+		write:verbose !!,"Building mini test set"
+		set tableName = $tr($p(className,".",1,*-1),".","_")_"."_compiledClass.SqlTableName
+		set result = ##class(%SQL.Statement).%ExecDirect(,"SELECT TOP 50 %ID FROM "_tableName), c = 0
+		while result.%Next() {
+			set testObjects(result.%GetData(1))=$CLASSMETHOD(className,"%OpenId",result.%GetData(1)), c = c+1
+		}
+		write:verbose !,"Gathered ",c," test records"
+		set result = ##class(%SQL.Statement).%ExecDirect(,"SELECT COUNT(*) FROM "_tableName)
+		set totalCount = $s(result.%Next():result.%GetData(1), 1:0)
+		write:verbose " out of ",totalCount," rows in the table"
+		for i = 1:1:compiledClass.Indices.Count() {
+			set index = compiledClass.Indices.GetAt(i)
+
+			// don't test these nontrivial indices right now
+			continue:(index.Type'="key")&&(index.Type'="index")
+			continue:index.TypeClass'=""
+			continue:index.Properties=""
+
+			set testIndices(index.Name) = index.Properties
+			
+			set id = ""
+			for {
+				set id = $order(testObjects(id),1,obj)
+				quit:id=""
+				kill subs
+				set subs = $l(index.Properties,",")
+				for j = 1:1:subs {
+					set subs(j) = $property(obj,$zstrip($p(index.Properties,",",j),"<>W"))
+				}
+				if '$classmethod(className, index.Name_"Exists", subs...) {
+					set sc = $$$ERROR($$$GeneralError, "Issues checking test sample for index '"_index.Name_"' for %ID "_id)
+					quit
+				}
+				merge testIndices(index.Name, id) = subs
+			}
+			quit:$$$ISERR(sc)
+		}
 		
 		// USEEXTENTSET class parameter
 		set param = ##class(%Dictionary.ParameterDefinition).%OpenId(className_"||USEEXTENTSET")
+		write:verbose !!,"Setting USEEXTENTSET class parameter to 1"
 		if $isobject(param) {
-			quit:param.Default=1  // nothing to do!
+			if param.Default=1 { // nothing to do!
+				write:verbose !,"Class '",className,"' already had USEEXTENTSET=1"
+				quit
+			} 
 			set param.Default = 1
 		} else {
 			set param = ##class(%Dictionary.ParameterDefinition).%New()
@@ -27,6 +73,7 @@ ClassMethod ConvertToUseExtents(className As %String, shortGlobalNames As %Boole
 		// Identify applicable storage definition and create a backup
 		set storage = ##class(%Dictionary.StorageDefinition).%OpenId(className_"||"_$s(class.StorageStrategy="":"Default", 1:class.StorageStrategy),,.sc)
 		quit:'$isobject(storage)
+		write:verbose !!,"Creating backup of current storage definition '",storage.Name,"'"
 		set backup = storage.%ConstructClone(1)
 		set backup.Name = storage.Name_"Backup", i=""
 		while ##class(%Dictionary.StorageDefinition).%ExistsId(className_"||"_backup.Name) { 
@@ -40,6 +87,7 @@ ClassMethod ConvertToUseExtents(className As %String, shortGlobalNames As %Boole
 		} else {
 			set storage.ExtentLocation = $s($e(storage.DataLocation,*)="D":$e(storage.DataLocation,1,*-1), 1:storage.DataLocation)
 		}
+		write:verbose !!,"New extent location: ",storage.ExtentLocation
 		
 		// now add explicit mappings per index from the *compiled* class
 		set indexLocation = storage.IndexLocation
@@ -52,14 +100,14 @@ ClassMethod ConvertToUseExtents(className As %String, shortGlobalNames As %Boole
 		quit:'$isobject(compiledStorage)
 		
 		// first build a list of the ones with an existing explicit location
+		write:verbose !!,"Building a list of existing index locations"
 		for i = 1:1:compiledStorage.Indices.Count() {
 			set compiledIndexStorage = compiledStorage.Indices.GetAt(i)
 			set locations(compiledIndexStorage.Name) = compiledIndexStorage.Location
 		}
 		
+		write:verbose !,"Creating new index storage definitions:"
 		do storage.Indices.Clear()
-		set compiledClass = ##class(%Dictionary.CompiledClass).%OpenId(className,,.sc)
-		quit:'$isobject(compiledClass)
 		for i = 1:1:compiledClass.Indices.Count() {
 			set index = compiledClass.Indices.GetAt(i)
 			if index.SystemAssigned && ($e(index.Name,1,5)="IDKEY") {
@@ -67,22 +115,69 @@ ClassMethod ConvertToUseExtents(className As %String, shortGlobalNames As %Boole
 				set indexStorage.parent = storage
 				set indexStorage.Name = index.Name
 				set indexStorage.Location = storage.DataLocation
+				write:verbose !,"   - ",indexStorage.Name," (system assigned) > ", indexStorage.Location
 			} else {
 				set indexStorage = ##class(%Dictionary.StorageIndexDefinition).%New()
 				set indexStorage.parent = storage
 				set indexStorage.Name = index.Name
 				set indexStorage.Location = $get(locations(index.Name), indexLocation_$$$QUOTE(index.Name)_")")
+				write:verbose !,"   - ",indexStorage.Name," > ", indexStorage.Location
 			}
 		}
 		
-		
+		write:verbose !!,"Saving updated storage definition"
 		set sc = class.%Save()
 		quit:$$$ISERR(sc)
 		set sc = storage.%Save()
 		quit:$$$ISERR(sc)
+		set sc = $system.OBJ.Compile(className, "ckf"_$s(verbose:"d", 1:"-d"))
+		quit:$$$ISERR(sc)
 		
+		// run mini test
+		write:verbose !!,"Verifying total record count: "
+		set result = ##class(%SQL.Statement).%ExecDirect(,"SELECT COUNT(*) FROM "_tableName)
+		set newCount = $s(result.%Next():result.%GetData(1), 1:0)
+		write:verbose newCount
+		if totalCount'=newCount {
+			set sc = $$$ERROR($$$GeneralError, "New record count doesn't match. Check extent/bitmap index map")
+			quit
+		}
+		write:verbose !,"Verifying test records are still accessible"
+		set id = ""
+		for {
+			set id = $order(testObjects(id))
+			quit:id=""
+			if '$classmethod(className,"%ExistsId",id) {
+				set sc = $$$ERROR($$$GeneralError, "Unable to retrieve row "_id_" using %ExistsId()")
+				quit
+			}
+		}
+		set index = ""
+		for {
+			set index = $order(testIndices(index),1,props)
+			quit:index=""
+				
+			write:verbose !," - Verifying index '",index,"' on ",props
+			set id = ""
+			for {
+				set id = $order(testIndices(index,id))
+				quit:id=""
+				kill subs
+				merge subs = testIndices(index,id)
+				if '$classmethod(className, index_"Exists", subs...) {
+					set sc = $$$ERROR($$$GeneralError, "Unable to retrieve row "_id_" using '",index,"' lookup")
+					quit
+				}
+			}
+		}
+
 	} catch (ex) {
 		set sc = ex.AsStatus()
+	}
+	write:verbose !
+	if verbose && $$$ISERR(sc) {
+		do $system.OBJ.DisplayError(sc)
+		write !
 	}
 	quit sc
 }
