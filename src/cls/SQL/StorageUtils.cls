@@ -29,9 +29,13 @@ ClassMethod ConvertToUseExtents(className As %String, shortGlobalNames As %Boole
 		for i = 1:1:compiledClass.Indices.Count() {
 			set index = compiledClass.Indices.GetAt(i)
 
-			// don't test these nontrivial indices right now
-			continue:(index.Type'="key")&&(index.Type'="index")
-			continue:index.TypeClass'=""
+			// don't test nontrivial indices right now
+			if ((index.Type'="key") && (index.Type'="index")) || (index.TypeClass'="") {
+				write:verbose !,"   WARNING: can't test ",index.Type," index '",index.Name,"'"
+				continue
+			}
+
+			// skip extent and IDKEY indices
 			continue:index.Properties=""
 
 			set testIndices(index.Name) = index.Properties
@@ -41,10 +45,22 @@ ClassMethod ConvertToUseExtents(className As %String, shortGlobalNames As %Boole
 				set id = $order(testObjects(id),1,obj)
 				quit:id=""
 				kill subs
-				set subs = $l(index.Properties,",")
+				set subs = $l(index.Properties,","),
+					null = 0
 				for j = 1:1:subs {
-					set subs(j) = $property(obj,$zstrip($p(index.Properties,",",j),"<>W"))
+					set prop = $zstrip($p(index.Properties,",",j),"<>W"), 
+						val = obj
+					for k = 1:1:$l(prop,".") {
+						set val = $property(val, $p(prop,".",k))
+						if (val="") {
+							set null = 1
+							quit
+						}
+					}
+					quit:null
+					set subs(j) = val
 				}
+				continue:null // ignore these rows for our test
 				if '$classmethod(className, index.Name_"Exists", subs...) {
 					set sc = $$$ERROR($$$GeneralError, "Issues checking test sample for index '"_index.Name_"' for %ID "_id)
 					quit
@@ -52,6 +68,9 @@ ClassMethod ConvertToUseExtents(className As %String, shortGlobalNames As %Boole
 				merge testIndices(index.Name, id) = subs
 			}
 			quit:$$$ISERR(sc)
+			if $d(testIndices(index.Name))<10 {
+				write:verbose !,"   WARNING: no valid test data for index '",index.Name,"'"
+			}
 		}
 		
 		// USEEXTENTSET class parameter
