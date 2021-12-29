@@ -1,6 +1,6 @@
 # IRIS SQL Utilities
 
-Various recipes from my SQL cookbook for baking your finest storage, all the way from baguette to croissant and back.
+Various recipes from my SQL cookbook for baking your finest storage, all the way from baguette to croissant and back. This is not an official InterSystems repository but rather a practical way to exchange experiments and sample code. Use at your own risk, or yell at me in the Issues section :-)
 
 ## Adopting Extent Sets
 
@@ -12,12 +12,14 @@ If you want to modernize your storage with just a little more than a paint job, 
 write ##class(SQL.StorageUtils).ConvertToUseExtentSets("My.Ancient.CustomerClass")
 ```
 
-See the class method's argument list for more ways to weak what gets generated.
+See the class method's argument list for further options.
+
 
 Notes:
-* when trying to convert classes in a hierarchy, aim at the superclass defining the storage
-* this class does not (yet) provide an option to perform the described drop-and-recreate-indices procedure
-* a future version of this class may also move the data from that long-ish D global into a proper extent global
+* When trying to convert classes in a hierarchy, you should aim this method at the superclass defining the storage. It will return an error if you try it on a subclass first, but will convert any subclasses along if you use it on a superclass.
+* This method performs a very simple check on non-bitmap indices to see if they still work after swapping the storage (for which it keeps a backup). It may not be watertight, so make sure to run your own regression / unit tests.
+* This method does not (yet) provide an option to perform the described drop-and-recreate-indices procedure
+* A future version of this method may also move the data from that long-ish D global into a proper extent global
 
 
 ## Projecting from a different namespace
