@@ -1,6 +1,6 @@
 # IRIS SQL Utilities
 
-Various recipes from my SQL cookbook for baking your finest storage, all the way from baguette to croissant and back. This is not an official InterSystems repository but rather a practical way to exchange experiments and sample code. Use at your own risk, or yell at me in the Issues section :-)
+Various recipes from my SQL cookbook for baking your finest storage, all the way from baguette to croissant and back. This is *not* an official InterSystems repository but rather a practical way to exchange experiments and sample code. Use at your own risk, or yell at me in the Issues section :-)
 
 ## Adopting Extent Sets
 
@@ -33,3 +33,12 @@ write ##class(SQL.StorageUtils).CreateMappedTable("ORIGINAL","My_Very.BestTable"
 See the class method's argument list for more ways to tweak what gets generated.
 
 Note that this method just creates a one-off projection and does not refresh it if the source table / storage changes.
+
+
+## Projecting a "list of" collection property
+
+Before 2022.1, only array-style collection properties support [projecting as a table](https://docs.intersystems.com/irislatest/csp/docbook/DocBook.UI.Page.cls?KEY=GOBJ_propcoll#GOBJ_propcoll_sqlproj). This utility helps you build a read-only table projecting list-style collection properties on earlier versions. Note that the generated class has no link to the original class so you'll have to drop / recreate it if you change the original one (which I'm not touching).
+
+```ObjectScript
+write ##class(SQL.CollectionUtils).BuildProjection("Sample.Person","FavoriteColors")
+```

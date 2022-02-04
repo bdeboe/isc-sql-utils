@@ -1,3 +1,9 @@
+/// Various utilities to warp or exploit IRIS' flexible storage definition framework.
+/// Methods to try:
+/// <ol>
+/// <li><method>ConvertToUseExtents</method></li>
+/// <li><method>CreateMappedTable</method></li>
+/// </ol>
 Class SQL.StorageUtils
 {
 
