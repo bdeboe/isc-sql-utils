@@ -1,6 +1,13 @@
 # IRIS SQL Utilities
 
-Various recipes from my SQL cookbook for baking your finest storage, all the way from baguette to croissant and back. This is *not* an official InterSystems repository but rather a practical way to exchange experiments and sample code. Use at your own risk, or yell at me in the Issues section :-)
+Various recipes from my SQL cookbook for baking your finest storage, all the way from baguette to croissant and back. This is *not* an official InterSystems repository but rather a practical way to exchange experiments and sample code. 
+
+To install, either import the contents of the `/src` folder or use [ZPM](https://github.com/intersystems-community/zpm):
+```ObjectScript
+zpm install bdb-sql-utils
+```
+
+Use at your own risk, or yell at me in the Issues section :-)
 
 ## Adopting Extent Sets
 
