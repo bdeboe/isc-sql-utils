@@ -18,7 +18,7 @@ We've been recommending the use of [extent sets](https://docs.intersystems.com/i
 If you want to modernize your storage with just a little more than a paint job, you can already adopt `USEEXTENTSET=1` and just wire your existing master and index map to their current global locations, so that all _new_ maps will get their proper global. Specifically, you could drop and recreate your indices so they all get their own global.
 
 ```ObjectScript
-write ##class(SQL.StorageUtils).ConvertToUseExtentSets("My.Ancient.CustomerClass")
+write ##class(bdb.sql.StorageUtils).ConvertToUseExtentSets("My.Ancient.CustomerClass")
 ```
 
 See the class method's argument list for further options.
@@ -36,7 +36,7 @@ Notes:
 As a developer you may find yourself longing for that perfect test table or bulky test dataset in a different namespace. Use `CreateMappedTable()` to create a projection in the current namespace of a table in another one.
 
 ```ObjectScript
-write ##class(SQL.StorageUtils).CreateMappedTable("ORIGINAL","My_Very.BestTable")
+write ##class(bdb.sql.StorageUtils).CreateMappedTable("ORIGINAL","My_Very.BestTable")
 ```
 
 See the class method's argument list for more ways to tweak what gets generated.
@@ -49,5 +49,5 @@ Note that this method just creates a one-off projection and does not refresh it 
 Before 2022.1, only array-style collection properties support [projecting as a table](https://docs.intersystems.com/irislatest/csp/docbook/DocBook.UI.Page.cls?KEY=GOBJ_propcoll#GOBJ_propcoll_sqlproj). This utility helps you build a read-only table projecting list-style collection properties on earlier versions. Note that the generated class has no link to the original class so you'll have to drop / recreate it if you change the original one (which I'm not touching).
 
 ```ObjectScript
-write ##class(SQL.CollectionUtils).BuildProjection("Sample.Person","FavoriteColors")
+write ##class(bdb.sql.CollectionUtils).BuildProjection("Sample.Person","FavoriteColors")
 ```

@@ -3,12 +3,12 @@
   <Document name="bdb-sql-utils.ZPM">
     <Module>
       <Name>bdb-sql-utils</Name>
-      <Version>0.1.0</Version>
+      <Version>0.2.0</Version>
       <Description>SQL cookbook for simple storage recipes. This is not an official InterSystems repository.</Description>
       <Packaging>module</Packaging>
       <SourcesRoot>src</SourcesRoot>
-      <Resource Name="SQL.CollectionUtils.CLS"/>
-      <Resource Name="SQL.StorageUtils.CLS"/>
+      <Resource Name="bdb.sql.CollectionUtils.CLS"/>
+      <Resource Name="bdb.sql.StorageUtils.CLS"/>
     </Module>
   </Document>
 </Export>

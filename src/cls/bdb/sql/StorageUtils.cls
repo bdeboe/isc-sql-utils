@@ -4,7 +4,7 @@
 /// <li><method>ConvertToUseExtents</method></li>
 /// <li><method>CreateMappedTable</method></li>
 /// </ol>
-Class SQL.StorageUtils
+Class bdb.sql.StorageUtils
 {
 
 /// Takes a class definition of a class with USEEXTENTSET=0 (or undefined), sets/adds the 
