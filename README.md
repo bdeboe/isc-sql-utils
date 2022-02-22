@@ -51,3 +51,12 @@ Before 2022.1, only array-style collection properties support [projecting as a t
 ```ObjectScript
 write ##class(bdb.sql.CollectionUtils).BuildProjection("Sample.Person","FavoriteColors")
 ```
+
+## Taking a snapshot of your Statement Index
+
+The SQL Statement Index is a treasure trove of information on the statements executed on your system, but it's somewhat "local" to your instance. If you're in a support or POC context, it may be practical to export this data and then import it in another environment, or simply take a snapshot before you pull apart your schema to try something new.
+
+```ObjectScript
+do ##class(bdb.sql.StatementUtils).Snapshot()
+do ##class(bdb.sql.StatementUtils).ExportSnapshot("\tmp\SI-export.xml")
+```
