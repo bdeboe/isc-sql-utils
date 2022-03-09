@@ -7,6 +7,80 @@
 Class bdb.sql.StorageUtils
 {
 
+/// Exports the table definition and contents for <var>tableName</var> to <var>file</var>.
+/// If the supplied export <var>file</var> name ends with .gzip or .gz, the export file
+/// will be compressed automatically.
+ClassMethod ExportTable(tableName As %String, file As %String, qspec As %String, Output excludesIndices As %Boolean) As %Status [ SqlName = ExportTable, SqlProc ]
+{
+	set sc = $$$OK, excludesIndices = 0
+	try {
+		return:'$SYSTEM.SQL.Schema.TableExists(tableName, .metadata) $$$ERROR($$$TableDoesNotExist, tableName)
+		set className = $lg(metadata,3), 
+			export(className_".CLS") = ""
+			
+		$$$qualifierParseFull(sc,qspec,qstruct)
+		quit:$$$ISERR(sc)
+		set verbose = $$$qualifierGetValue(qstruct,"displaylog")
+
+		// first peek at storage and check if we can do with just the master map
+		set class = ##class(%Dictionary.ClassDefinition).%OpenId(className)
+		set storage = ##class(%Dictionary.StorageDefinition).%OpenId(className_"||"_$s(class.StorageStrategy'="":class.Storagestrategy, 1:"Default"))
+		
+		// can't handle this through globals-level export
+		return:storage.Type="%Storage.Sharded" $$$ERROR($$$NotImplemented)
+
+		if (storage.Type="%Storage.Persistent") || 
+			(storage.Type="%Library.CacheStorage") || 
+			(storage.Type="%CacheStorage") {
+
+			set:storage.DataLocation'="" export(storage.DataLocation_".GBL")=""
+			set:storage.CounterLocation'="" export(storage.CounterLocation_".GBL")=""
+			set:storage.StreamLocation'="" export(storage.StreamLocation_".GBL")=""
+			set:storage.IdLocation'="" export(storage.IdLocation_".GBL")=""
+			set:storage.VersionLocation'="" export(storage.VersionLocation_".GBL")=""
+
+			set excludesIndices = 1
+
+		} else {
+
+			// non-trivial storage definition, so let's pick up all globals known by
+			// the extent mgr
+			set stmt = ##class(%SQL.Statement).%New()
+			set sc = stmt.%Prepare("CALL %ExtentMgr.GlobalsUsed(?)")
+			quit:$$$ISERR(sc)
+			
+			set extentName = className_".cls",
+				rs = stmt.%Execute(extentName)
+
+			while rs.%Next() {
+				// This may export more than we want, but there's no handy way to import only 
+				// the GlobalReference subtree
+				set export(rs.%Get("GlobalName")_".GBL") = ""
+			}
+
+		}
+
+		// include related classes
+		do ..AddRelated(class, .related, 1, 1, 0)
+		set relatedClassName = ""
+		for {
+			set relatedClassName = $order(related(relatedClassName))
+			quit:relatedClassName=""
+			set export(relatedClassName_".CLS")=""
+		}
+		
+		// now export
+		set sc = $SYSTEM.OBJ.Export(.export, file, .qspec)
+
+		write:excludesIndices&&verbose !,"Indices are NOT included.",
+				 !,"Run 'BUILD INDEX FOR TABLE "_tableName_"' after import",!
+
+	} catch (ex) {
+		set sc = ex.AsStatus()
+	}
+	quit sc
+}
+
 /// Takes a class definition of a class with USEEXTENTSET=0 (or undefined), sets/adds the 
 /// USEEXTENTSET=1 class parameter and adapts the storage definition to match the class'
 /// existing globals so that everything remains accessible and any *new* storage maps
@@ -519,7 +593,7 @@ ClassMethod ScanCode(oldCode, Output newCode, sourceNS As %String) As %Boolean [
 }
 
 /// Helper method for CreateMappedTable(). Do not use directly.
-ClassMethod AddRelated(def As %Dictionary.ClassDefinition, ByRef classes, includePropTypes As %Boolean, includeForeignKeys As %Boolean) As %Integer [ Internal, Private ]
+ClassMethod AddRelated(def As %Dictionary.ClassDefinition, ByRef classes, includePropTypes As %Boolean, includeForeignKeys As %Boolean, clone As %Boolean = 1) As %Integer [ Internal, Private ]
 {
 	set super = def.Super, cnt = 0
 	for i = 1:1:$l(super,",") {
@@ -530,8 +604,8 @@ ClassMethod AddRelated(def As %Dictionary.ClassDefinition, ByRef classes, includ
 		set d = ##class(%Dictionary.ClassDefinition).%OpenId(s,,.sc)
 		b:$$$ISERR(sc)
 		continue:d.System 			// assume customers don't use/need this
-		set classes(s) = d.%ConstructClone(1)
-		set cnt = cnt + ..AddRelated(d, .classes, includePropTypes)
+		set classes(s) = $s(clone:d.%ConstructClone(1), 1:"")
+		set cnt = cnt + ..AddRelated(d, .classes, includePropTypes, includeForeignKeys, clone)
 	}
 	
 	// Also consider picking up property types
@@ -543,21 +617,21 @@ ClassMethod AddRelated(def As %Dictionary.ClassDefinition, ByRef classes, includ
 			set d = ##class(%Dictionary.ClassDefinition).%OpenId(t,,.sc)
 			b:$$$ISERR(sc)
 			continue:d.System 			// assume customers don't use/need this
-			set classes(t) = d.%ConstructClone(1)
-			set cnt = cnt + ..AddRelated(d, .classes, includePropTypes, includeForeignKeys)
+			set classes(t) = $s(clone:d.%ConstructClone(1), 1:"")
+			set cnt = cnt + ..AddRelated(d, .classes, includePropTypes, includeForeignKeys, clone)
 		}
 	}
 	
 	if (includeForeignKeys) {
 		for i = 1:1:def.ForeignKeys.Count() {
-			set t = def.ForeignKeys.GetAt(i).Type
+			set t = def.ForeignKeys.GetAt(i).ReferencedClass
 			continue:$e(t)="%" 			// skip obvious system classes
 			continue:$d(classes(t)) 	// skip classes we already listed
 			set d = ##class(%Dictionary.ClassDefinition).%OpenId(t,,.sc)
 			b:$$$ISERR(sc)
 			continue:d.System 			// assume customers don't use/need this
-			set classes(t) = d.%ConstructClone(1)
-			set cnt = cnt + ..AddRelated(d, .classes, includePropTypes, includeForeignKeys)
+			set classes(t) = $s(clone:d.%ConstructClone(1), 1:"")
+			set cnt = cnt + ..AddRelated(d, .classes, includePropTypes, includeForeignKeys, clone)
 		}
 	}
 	
