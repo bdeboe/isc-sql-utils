@@ -15,21 +15,12 @@ Use at your own risk, or yell at me in the Issues section :-)
 
 ## Exporting a table and its contents
 
-This one will likely find its way into the product after a little more polishing, but it does exactly what the title says:
+This one will likely find its way into the product after a little more polishing, but it does exactly what the title says. For tables with regular storage, only the master map globals will be exported and indices will be rebuilt when running the `ImportTable()` method.
 
 ```ObjectScript
-do ##class(bdb.sql.StorageUtils).ExportTable("SQLUser.NATION","C:\tmp\table.xml.gz")
- 
-Exporting to XML started on 03/09/2022 16:46:38
-Exporting class: User.FixedWidthString
-Exporting class: User.NATION
-Exporting class: User.REGION
-Exporting global: ^poCN.B6qS.1
-Exporting global: ^poCN.B6qS.S
-Export finished successfully.
- 
-Indices are NOT included.
-Run 'BUILD INDEX FOR TABLE SQLUser.NATION' after import
+do ##class(bdb.sql.StorageUtils).ExportTable("SQLUser.NATION","/tmp/table.xml.gz")
+...
+do ##class(bdb.sql.StorageUtils).ImportTable("/tmp/table.xml.gz")
 ```
 
 ## Adopting Extent Sets

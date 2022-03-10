@@ -21,6 +21,7 @@ ClassMethod ExportTable(tableName As %String, file As %String, qspec As %String,
 		$$$qualifierParseFull(sc,qspec,qstruct)
 		quit:$$$ISERR(sc)
 		set verbose = $$$qualifierGetValue(qstruct,"displaylog")
+		write:verbose !,"Exporting full table definition and contents for '",tableName,"'"
 
 		// first peek at storage and check if we can do with just the master map
 		set class = ##class(%Dictionary.ClassDefinition).%OpenId(className)
@@ -69,11 +70,79 @@ ClassMethod ExportTable(tableName As %String, file As %String, qspec As %String,
 			set export(relatedClassName_".CLS")=""
 		}
 		
+		// if we excluded indices, create a small IndexBuilderUtility class we'll look for and
+		// run upon import
+		if excludesIndices {
+			set ibuName = "bdb.sql.ibu.c"_$zcrc(tableName,7)
+			write:verbose !,"Creating Index Builder Utility class for table import: ",ibuName,!
+
+			// we won't bother too much about locking etc, assuming the CRC is unique enough 
+			// and the contents of the class is going to be the same either way
+			do Delete^%apiOBJ(ibuName,"-d")
+			set ibuClass = ##class(%Dictionary.ClassDefinition).%New()
+			set ibuClass.Hidden = 1
+			set ibuClass.ProcedureBlock = 1
+			set ibuClass.Name = ibuName
+			set ibuClass.Description = "Helper method created by bdb.sql.StorageUtils:ExportClass()"_$c(13,10)_"Run once upon import and drop afterwards"
+			set ibuMethod = ##class(%Dictionary.MethodDefinition).%New()
+			set ibuMethod.parent = ibuClass
+			set ibuMethod.Name = "Run"
+			set ibuMethod.ClassMethod = 1
+			set ibuMethod.ReturnType = "%Status"
+			do ibuMethod.Implementation.WriteLine("	quit ##class("_className_").%BuildIndices()")
+			set ibuParam = ##class(%Dictionary.ParameterDefinition).%New()
+			set ibuParam.parent = ibuClass
+			set ibuParam.Name = "TABLENAME"
+			set ibuParam.Default = tableName
+			set sc = ibuClass.%Save()
+			quit:$$$ISERR(sc) // TODO - might accommodate the case where we have no write privs and just make this a warning
+			set export(ibuName_".CLS")=""
+		}
+		
 		// now export
 		set sc = $SYSTEM.OBJ.Export(.export, file, .qspec)
 
-		write:excludesIndices&&verbose !,"Indices are NOT included.",
-				 !,"Run 'BUILD INDEX FOR TABLE "_tableName_"' after import",!
+		if excludesIndices && verbose {
+			write !,"Indices are NOT included.",
+				 !,"Import using ##class(bdb.sql.StorageUtils).ImportTable() or ",
+				 !,"run 'BUILD INDEX FOR TABLE "_tableName_"' from a SQL prompt",
+				 !,"after regular import using %SYSTEM.OBJ",!
+		}
+
+		if $g(ibuName)'="" {
+			do Delete^%apiOBJ(ibuName, .qspec)
+		}
+
+	} catch (ex) {
+		set sc = ex.AsStatus()
+	}
+	quit sc
+}
+
+ClassMethod ImportTable(file As %String, qspec As %String) As %Status [ SqlName = ImportTable, SqlProc ]
+{
+	set sc = $$$OK
+	try {
+		$$$qualifierParseFull(sc,qspec,qstruct)
+		quit:$$$ISERR(sc)
+		set verbose = $$$qualifierGetValue(qstruct,"displaylog")
+		write:verbose !,"Importing table from file '",file,"'"
+
+		set qstruct("compile") = 1
+		set sc = $SYSTEM.OBJ.Load(file, .qstruct,, .loaded)
+		quit:$$$ISERR(sc)
+
+		set ibuName = $order(loaded("bdb.sql.ibu.c"))
+		if $e(ibuName,1,13)="bdb.sql.ibu.c" {
+			set ibuName = $p(ibuName,".",1,*-1) // drop .CLS suffix
+			write:verbose !,"Running Index Builder Utility for table '",$parameter(ibuName,"TABLENAME"),"'"
+
+			set sc = $classmethod(ibuName, "Run")
+			quit:$$$ISERR(sc)
+
+			// drop class after use
+			do Delete^%apiOBJ(ibuName, .qspec)
+		}
 
 	} catch (ex) {
 		set sc = ex.AsStatus()
