@@ -605,7 +605,7 @@ ClassMethod TableSize(tableName As %String = "", Output info, fast As %Boolean =
                 totalUsed = totalUsed + sizeUsed
 			set info("detail",glo,"allocated") = sizeAllocated,
 				info("detail",glo,"used") = sizeUsed
-            write:verbose !," - ",glo," size: ",sizeAllocated," allocated, ",sizeUsed," used"
+            write:verbose !," - ",glo," size: ",sizeAllocated," MB allocated, ",sizeUsed," MB used"
 
             if (glo '= rs.%Get("GlobalReference")) {
 				do Warn("Only "_rs.%Get("GlobalReference")_" out of this global is used for this table")
