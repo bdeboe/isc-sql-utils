@@ -181,6 +181,46 @@ AddClass(classname)
     }
 }
 
+ClassMethod AddTableUsageStats(schema = "SISnapshot", verbose As %Boolean = 1) As %Status
+{
+    set sc = $$$OK
+    try {
+        set hasROWCOUNT = $s($system.Version.GetMajor()>=2022:1, $p($system.Version.GetNumber(),".",1,2)="2021.2":1, 1:0)
+
+        set exists = $system.SQL.Schema.TableExists(schema_".TABLE_DAILY_USAGE_STATS")
+        set sql = "SELECT Relation as TABLE_NAME, Type as TYPE, Day as DAY, SUM(d.StatCount) as TOTAL_COUNT"_$s(hasROWCOUNT:", SUM(d.StatRowCount) AS TOTAL_ROW_COUNT ",1:" ")_
+                    "FROM (SELECT Hash, $PIECE(Statement,' ', CASE WHEN SUBSTR(Statement, 1, 4)=' DEC' THEN 6 ELSE 2 END) AS Type FROM INFORMATION_SCHEMA.STATEMENTS) AS s "_
+                    "    JOIN INFORMATION_SCHEMA.STATEMENT_RELATIONS r ON s.Hash = r.Statement "_
+                    "    JOIN INFORMATION_SCHEMA.STATEMENT_DAILY_STATS d ON s.Hash = d.Statement "_
+                    " GROUP BY Relation, Type, Day"
+
+        if 'exists {
+
+            quit:'$$RunDDL("CREATE TABLE "_schema_".TABLE_DAILY_USAGE_STATS AS "_sql)
+            quit:'$$RunDDL("CREATE UNIQUE INDEX UK ON "_schema_".TABLE_DAILY_USAGE_STATS(TABLE_NAME, TYPE, DAY)")
+
+        } else {
+            
+            quit:'$$RunDDL("INSERT OR UPDATE INTO "_schema_".TABLE_DAILY_USAGE_STATS "_sql)
+
+        }
+
+    } catch (ex) {
+        set sc = ex.AsStatus()
+    }
+    quit sc
+
+RunDDL(sql)
+    write:verbose !,"Executing DDL:",!,sql,!
+    set rs = ##class(%SQL.Statement).%ExecDirect(,sql)
+    if rs.%SQLCODE<0 {
+        write:verbose !,rs.%Message,!
+        set sc = $$$ERROR($$$GeneralError, rs.%Message)
+        quit 0
+    }
+    quit 1
+}
+
 /// Updates a snapshot's STATEMENTS table by populating the Plan column with EXPLAIN output
 /// for those statements. This is a best-effort routine that should be run prior to exporting.
 ClassMethod MakePlansReadable(statementTable As %String = "SISnapshot.STATEMENTS") As %Status [ Internal, Private ]
