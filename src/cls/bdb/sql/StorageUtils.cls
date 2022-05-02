@@ -580,6 +580,17 @@ ClassMethod TableSize(tableName As %String = "", Output info, fast As %Boolean =
         
 		write:verbose !,"Fetching total table size for '",tableName,"':",!
 
+		set rs = ##class(%SQL.Statement).%ExecDirect(,"SELECT COUNT(*) FROM %Dictionary.CompiledProperty WHERE parent = ? AND Relationship = 1 AND Cardinality IN ('parent','child')", className)
+		if rs.%Next() && rs.%GetData(1) {
+			do Warn("Table is involved in parent-child relationships. Result may not be accurate.")
+		}
+
+		set storageName = ##class(%Dictionary.CompiledClass).%OpenId(className).StorageStrategy
+		set storage = ##class(%Dictionary.CompiledStorage).%OpenId(className_"||"_storageName)
+		if storage.Type'="%Storage.Persistent" {
+			do Warn("Table storage type '"_storage.Type_"' is not fully supported. Result may not be accurate.")
+		}
+
         set rsize = ##class(%ResultSet).%New("%SYS.GlobalQuery:Size")
 
         set (totalAllocated, totalUsed) = 0
@@ -610,17 +621,36 @@ ClassMethod TableSize(tableName As %String = "", Output info, fast As %Boolean =
             if (glo '= rs.%Get("GlobalReference")) {
 				do Warn("Only "_rs.%Get("GlobalReference")_" out of this global is used for this table")
             }
-        }
+		}
+
+		// Streams might be separate
+		if storage.StreamLocation'="" {
+			set glo = storage.StreamLocation
+			set dir = ##class(%SYS.Namespace).GetGlobalDest(,glo)
+            if ($d(globs(glo))) {
+                write:verbose !,"- Global "_glo_", covering "_rs.%Get("GlobalReference")_" already counted"
+            } else {
+				set globs(glo)=""
+				do rsize.%Execute($p(dir,"^",2), "", $e(glo,2,*),,,fast)
+				if rsize.%Next() {
+					set sizeAllocated = rsize.%GetData(2), sizeUsed = rsize.%GetData(3)
+				} else {
+					do Warn(" - No size info found for "_glo)
+					set sizeAllocated = "", sizeUsed = ""
+				}
+				
+				set totalAllocated = totalAllocated + sizeAllocated,
+					totalUsed = totalUsed + sizeUsed
+				set info("detail",glo,"allocated") = sizeAllocated,
+					info("detail",glo,"used") = sizeUsed
+				write:verbose !," - ",glo," size: ",sizeAllocated," MB allocated, ",sizeUsed," MB used"
+			}
+		}
 
 		set info("total","allocated") = totalAllocated,
 			info("total","used") = totalUsed
 
         write:verbose !!,"Total size: "_totalAllocated_" allocated, "_totalUsed_" used",!
-
-		set rs = ##class(%SQL.Statement).%ExecDirect(,"SELECT COUNT(*) FROM %Dictionary.CompiledProperty WHERE parent = ? AND Relationship = 1 AND Cardinality IN ('parent','child')", className)
-		if rs.%Next() && rs.%GetData(1) {
-			do Warn("Table is involved in parent-child relationships. Result may not be accurate")
-		}
 
     } catch (ex) {
         set sc = ex.AsStatus()
