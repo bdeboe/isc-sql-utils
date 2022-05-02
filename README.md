@@ -13,6 +13,18 @@ zpm install bdb-sql-utils
 
 Use at your own risk, or yell at me in the Issues section :-)
 
+## Table Storage Consumption
+
+If you're looking for a handy way to check the size of your IRIS SQL table on disk, try this simple classmethod or query:
+
+```ObjectScript
+do ##class(bdb.sql.StorageUtils).TableSize("MySchema.MyTable")
+```
+
+```SQL
+CALL bdb_sql.TableSize('MySchema.MyTable')
+```
+
 ## Adopting Extent Sets
 
 We've been recommending the use of [extent sets](https://docs.intersystems.com/irislatest/csp/documatic/%25CSP.Documatic.cls?&LIBRARY=%25SYS&CLASSNAME=%25Library.Persistent#USEEXTENTSET) for many years now, but sadly cannot make this the default behaviour for newly created classes because of backwards compatibility issues it'd cause. 
