@@ -3,6 +3,7 @@
 /// <ol>
 /// <li><method>ConvertToUseExtents</method></li>
 /// <li><method>CreateMappedTable</method></li>
+/// <li><method>TableSize</method></li>
 /// </ol>
 Class bdb.sql.StorageUtils
 {
@@ -564,6 +565,7 @@ ClassMethod AddRelated(def As %Dictionary.ClassDefinition, ByRef classes, includ
 	quit cnt
 }
 
+/// Simple method to retrieve the storage consumption of your IRIS SQL table
 ClassMethod TableSize(tableName As %String = "", Output info, fast As %Boolean = 0, verbose As %Boolean = 1) As %Status
 {
 	kill info
@@ -634,6 +636,53 @@ ClassMethod TableSize(tableName As %String = "", Output info, fast As %Boolean =
 Warn(message, level="WARNING")
 	set info("warnings",$i(info("warnings"))) = message
 	write:verbose !,level,": ",message
+}
+
+/// SQL Query wrapper for <method>TableSize</method>
+Query TableSizeSQL(tableName As %String, fastSize As %Boolean = 0, showWarnings As %Boolean = 0) As %Query(ROWSPEC = "global:%String,allocatedMB:%Numeric,usedMB:%Numeric") [ SqlName = TableSize, SqlProc ]
+{
+}
+
+ClassMethod TableSizeSQLExecute(ByRef qHandle As %Binary, tableName As %String, fastSize As %Boolean = 0, showWarnings As %Boolean = 0) As %Status [ Internal, ServerOnly = 1 ]
+{
+	kill qHandle
+	set sc = ..TableSize(tableName, .info, fastSize, 0)
+	quit:$$$ISERR(sc) sc
+
+	set glo = ""
+	for {
+		set glo = $order(info("detail",glo))
+		quit:glo=""
+
+		set qHandle($i(qHandle)) = $lb(glo, $g(info("detail",glo,"allocated")), $g(info("detail",glo,"used")))
+	}
+	set qHandle($i(qHandle)) = $lb("total", $g(info("total","allocated")), $g(info("total","used")))
+	set qHandle = 0
+
+	if showWarnings {
+		for i = 1:1:$g(info("warnings")) {
+			write !,"WARNING: ",$g(info("warnings",i)) 
+		}
+	}
+
+	quit sc
+}
+
+ClassMethod TableSizeSQLFetch(ByRef qHandle As %Binary, Output Row As %List, Output AtEnd As %Integer) As %Status [ Internal, ServerOnly = 1 ]
+{
+	set qHandle = $order(qHandle(qHandle),1,data)
+	if qHandle="" {
+		set AtEnd = 1, Row = ""
+	} else {
+		set AtEnd = 0, Row = data
+	}
+	quit $$$OK
+}
+
+ClassMethod TableSizeSQLClose(ByRef qHandle As %Binary) As %Status [ Internal, ServerOnly = 1 ]
+{
+	kill qHandle
+	quit $$$OK
 }
 
 /// Experimental
