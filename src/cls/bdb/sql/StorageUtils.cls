@@ -564,4 +564,157 @@ ClassMethod AddRelated(def As %Dictionary.ClassDefinition, ByRef classes, includ
 	quit cnt
 }
 
+/// Experimental
+ClassMethod BuildValuesFromStats(tableName As %String, globalName As %String = "^||values", verbose As %Boolean = 1) As %Status [ Internal ]
+{
+	kill @globalName
+	set sc = $$$OK
+	try {
+		if '$SYSTEM.SQL.Schema.TableExists(tableName, .metadata) {
+			set sc = $$$ERROR($$$TableDoesNotExist, tableName)
+			quit
+		}
+		set className = $lg(metadata,3)
+		set class = ##class(%Dictionary.CompiledClass).%OpenId(className,,.sc)
+		quit:$$$ISERR(sc)
+
+		write:verbose !,"Building values based on table stats for '",tableName,"'"
+
+		// first list all target properties
+		for i = 1:1:class.Properties.Count() {
+			set prop = class.Properties.GetAt(i)
+
+			// skip system, private and calculated props
+			continue:$e(prop)="%"
+			continue:prop.SqlComputed
+			continue:prop.Transient
+			continue:prop.Calculated
+			continue:prop.Internal
+			continue:prop.Private
+
+			set props(prop.SqlFieldName) = prop
+		}
+
+		// now look up properties with stats
+		set fields = 0
+		set storage = class.Storages.GetAt(1)
+		for i = 1:1:storage.Properties.Count() {
+			set propStorage = storage.Properties.GetAt(i)
+
+			// skip props we're not interested in
+			continue:'$data(props(propStorage.Name),propDef)
+
+			set fields = fields+1,
+				fields(fields) = propStorage.Name
+
+			// build list of values
+			if propStorage.Selectivity="1" {
+				// unique field
+				write:verbose !,"Column '",propStorage.Name,"' is UNIQUE"
+				set @globalName@(fields)=-1
+			} else {
+				set cardinality = 1 / (propStorage.Selectivity/100) \ 1
+				write:verbose !,"Column #",fields," '",propStorage.Name,"' (",propDef.Type,") has cardinality ",cardinality
+				set @globalName@(fields)=cardinality
+				set maxLen = propDef.Parameters.GetAt("MAXLEN")
+				set:maxLen>10 maxLen = 10
+				for j = 0:1:cardinality-1 {
+					if (propDef.Type="%Library.Integer") {
+						set value = j
+					} elseif (propDef.Type="%Library.Date") || (propDef.Type="%DeepSee.dataType.dateTime") {
+						set value = $h-j
+					} elseif (propDef.Name["FxYear") {
+						set value = 2022-j
+					} elseif (propDef.Name["FxMonthYear") {
+						set value = (2022-(j\12))_$s(j#12>9:j#12,1:"0"_(j#12))
+					} elseif (propDef.Name["FxDayMonthYear") {
+						set value = $tr($zdate($h-j,3),"-")
+					} elseif (propDef.Type="%Library.String") {
+						set value = ##class(%PopulateUtils).String(maxLen)
+					} else {
+						set value = j
+					}
+					set @globalName@(fields,j) = value
+				}
+			}
+			kill props(propDef.Name)
+		}
+
+		write:verbose !
+
+		set name = "" 
+		for {
+			set name = $order(props(name))
+			quit:name=""
+
+			write:verbose !,"No stats found for column '",name,"', skipping"
+		}
+		write:verbose !
+
+		merge @globalName@("fields") = fields
+
+	} catch (ex) {
+		set sc = ex.AsStatus()
+	}
+	write:verbose !
+	quit sc
+}
+
+/// Experimental
+ClassMethod PopulateFromStats(tableName As %String, rowCount As %Integer = 1000, valuesGlobal As %String = "", verbose As %Boolean = 1) As %Status [ Internal ]
+{
+	set sc = $$$OK
+	try {
+		if '$SYSTEM.SQL.Schema.TableExists(tableName, .metadata) {
+			set sc = $$$ERROR($$$TableDoesNotExist, tableName)
+			quit
+		}
+
+		set globalName = $case(valuesGlobal, "":"^||values", :valuesGlobal)
+		if '$d(@globalName) {
+			set sc = ..BuildValuesFromStats(tableName, globalName, verbose)
+			quit:$$$ISERR(sc)
+		}
+
+		merge fields = @globalName@("fields")
+
+		// build INSERT statement
+		set insert = "INSERT INTO "_tableName_" ("_fields(1)
+		for i = 2:1:fields { set insert = insert _ ", " _ fields(i) }
+		set insert = insert_") VALUES (?"
+		for i = 2:1:fields { set insert = insert_", ?" }
+		set insert = insert_")"
+
+		write:verbose !!,"SQL statement:",!,insert
+
+		set stmt = ##class(%SQL.Statement).%New()
+		set sc = stmt.%Prepare(insert)
+		quit:$$$ISERR(sc)
+		for i = 1:1:rowCount {
+			kill params
+			set params = fields
+			for j = 1:1:fields {
+				set params(j) = @globalName@(j,$random(@globalName@(j)))
+			}
+			set rs = stmt.%Execute(params...)
+			if rs.%SQLCODE {
+				set sc = $$$ERROR($$$GeneralError, rs.%Message)
+				quit
+			}
+		}
+		quit:$$$ISERR(sc)
+
+		write:verbose !,"Inserted ",rowCount," records"
+
+	} catch (ex) {
+		set sc = ex.AsStatus()
+	}
+	if (valuesGlobal="") {
+		write:verbose !,"Cleaning up values"
+		kill @globalName
+	}
+	write:verbose !
+	quit sc
+}
+
 }
