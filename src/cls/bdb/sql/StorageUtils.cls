@@ -8,6 +8,149 @@
 Class bdb.sql.StorageUtils
 {
 
+/// Exports the table definition and contents for <var>tableName</var> to <var>file</var>.
+/// If the supplied export <var>file</var> name ends with .gzip or .gz, the export file
+/// will be compressed automatically.
+ClassMethod ExportTable(tableName As %String, file As %String, qspec As %String, Output excludesIndices As %Boolean) As %Status [ SqlName = ExportTable, SqlProc ]
+{
+	set sc = $$$OK, excludesIndices = 0
+	try {
+		return:'$SYSTEM.SQL.Schema.TableExists(tableName, .metadata) $$$ERROR($$$TableDoesNotExist, tableName)
+		set className = $lg(metadata,3), 
+			export(className_".CLS") = ""
+			
+		$$$qualifierParseFull(sc,qspec,qstruct)
+		quit:$$$ISERR(sc)
+		set verbose = $$$qualifierGetValue(qstruct,"displaylog")
+		write:verbose !,"Exporting full table definition and contents for '",tableName,"'"
+
+		// first peek at storage and check if we can do with just the master map
+		set class = ##class(%Dictionary.ClassDefinition).%OpenId(className)
+		set storage = ##class(%Dictionary.StorageDefinition).%OpenId(className_"||"_$s(class.StorageStrategy'="":class.Storagestrategy, 1:"Default"))
+		
+		// can't handle this through globals-level export
+		return:storage.Type="%Storage.Sharded" $$$ERROR($$$NotImplemented)
+
+		if (storage.Type="%Storage.Persistent") || 
+			(storage.Type="%Library.CacheStorage") || 
+			(storage.Type="%CacheStorage") {
+
+			set:storage.DataLocation'="" export(storage.DataLocation_".GBL")=""
+			set:storage.CounterLocation'="" export(storage.CounterLocation_".GBL")=""
+			set:storage.StreamLocation'="" export(storage.StreamLocation_".GBL")=""
+			set:storage.IdLocation'="" export(storage.IdLocation_".GBL")=""
+			set:storage.VersionLocation'="" export(storage.VersionLocation_".GBL")=""
+
+			set excludesIndices = 1
+
+		} else {
+
+			// non-trivial storage definition, so let's pick up all globals known by
+			// the extent mgr
+			set stmt = ##class(%SQL.Statement).%New()
+			set sc = stmt.%Prepare("CALL %ExtentMgr.GlobalsUsed(?)")
+			quit:$$$ISERR(sc)
+			
+			set extentName = className_".cls",
+				rs = stmt.%Execute(extentName)
+
+			while rs.%Next() {
+				// This may export more than we want, but there's no handy way to import only 
+				// the GlobalReference subtree
+				set export(rs.%Get("GlobalName")_".GBL") = ""
+			}
+
+		}
+
+		// include related classes
+		do ..AddRelated(class, .related, 1, 1, 0)
+		set relatedClassName = ""
+		for {
+			set relatedClassName = $order(related(relatedClassName))
+			quit:relatedClassName=""
+			set export(relatedClassName_".CLS")=""
+		}
+		
+		// if we excluded indices, create a small IndexBuilderUtility class we'll look for and
+		// run upon import
+		if excludesIndices {
+			set ibuName = "bdb.sql.ibu.c"_$zcrc(tableName,7)
+			write:verbose !,"Creating Index Builder Utility class for table import: ",ibuName,!
+
+			// we won't bother too much about locking etc, assuming the CRC is unique enough 
+			// and the contents of the class is going to be the same either way
+			do Delete^%apiOBJ(ibuName,"-d")
+			set ibuClass = ##class(%Dictionary.ClassDefinition).%New()
+			set ibuClass.Hidden = 1
+			set ibuClass.ProcedureBlock = 1
+			set ibuClass.Name = ibuName
+			set ibuClass.Description = "Helper method created by bdb.sql.StorageUtils:ExportClass()"_$c(13,10)_"Run once upon import and drop afterwards"
+			set ibuMethod = ##class(%Dictionary.MethodDefinition).%New()
+			set ibuMethod.parent = ibuClass
+			set ibuMethod.Name = "Run"
+			set ibuMethod.ClassMethod = 1
+			set ibuMethod.ReturnType = "%Status"
+			do ibuMethod.Implementation.WriteLine("	quit ##class("_className_").%BuildIndices()")
+			set ibuParam = ##class(%Dictionary.ParameterDefinition).%New()
+			set ibuParam.parent = ibuClass
+			set ibuParam.Name = "TABLENAME"
+			set ibuParam.Default = tableName
+			set sc = ibuClass.%Save()
+			quit:$$$ISERR(sc) // TODO - might accommodate the case where we have no write privs and just make this a warning
+			set export(ibuName_".CLS")=""
+		}
+		
+		// now export
+		set sc = $SYSTEM.OBJ.Export(.export, file, .qspec)
+
+		if excludesIndices && verbose {
+			write !,"Indices are NOT included.",
+				 !,"Import using ##class(bdb.sql.StorageUtils).ImportTable() or ",
+				 !,"run 'BUILD INDEX FOR TABLE "_tableName_"' from a SQL prompt",
+				 !,"after regular import using %SYSTEM.OBJ",!
+		}
+
+		if $g(ibuName)'="" {
+			do Delete^%apiOBJ(ibuName, .qspec)
+		}
+
+	} catch (ex) {
+		set sc = ex.AsStatus()
+	}
+	quit sc
+}
+
+ClassMethod ImportTable(file As %String, qspec As %String) As %Status [ SqlName = ImportTable, SqlProc ]
+{
+	set sc = $$$OK
+	try {
+		$$$qualifierParseFull(sc,qspec,qstruct)
+		quit:$$$ISERR(sc)
+		set verbose = $$$qualifierGetValue(qstruct,"displaylog")
+		write:verbose !,"Importing table from file '",file,"'"
+
+		set qstruct("compile") = 1
+		set sc = $SYSTEM.OBJ.Load(file, .qstruct,, .loaded)
+		quit:$$$ISERR(sc)
+
+		set ibuName = $order(loaded("bdb.sql.ibu.c"))
+		if $e(ibuName,1,13)="bdb.sql.ibu.c" {
+			set ibuName = $p(ibuName,".",1,*-1) // drop .CLS suffix
+			write:verbose !,"Running Index Builder Utility for table '",$parameter(ibuName,"TABLENAME"),"'"
+
+			set sc = $classmethod(ibuName, "Run")
+			quit:$$$ISERR(sc)
+
+			// drop class after use
+			do Delete^%apiOBJ(ibuName, .qspec)
+		}
+
+	} catch (ex) {
+		set sc = ex.AsStatus()
+	}
+	quit sc
+}
+
 /// Takes a class definition of a class with USEEXTENTSET=0 (or undefined), sets/adds the 
 /// USEEXTENTSET=1 class parameter and adapts the storage definition to match the class'
 /// existing globals so that everything remains accessible and any *new* storage maps
@@ -520,7 +663,7 @@ ClassMethod ScanCode(oldCode, Output newCode, sourceNS As %String) As %Boolean [
 }
 
 /// Helper method for CreateMappedTable(). Do not use directly.
-ClassMethod AddRelated(def As %Dictionary.ClassDefinition, ByRef classes, includePropTypes As %Boolean, includeForeignKeys As %Boolean) As %Integer [ Internal, Private ]
+ClassMethod AddRelated(def As %Dictionary.ClassDefinition, ByRef classes, includePropTypes As %Boolean, includeForeignKeys As %Boolean, clone As %Boolean = 1) As %Integer [ Internal, Private ]
 {
 	set super = def.Super, cnt = 0
 	for i = 1:1:$l(super,",") {
@@ -531,8 +674,8 @@ ClassMethod AddRelated(def As %Dictionary.ClassDefinition, ByRef classes, includ
 		set d = ##class(%Dictionary.ClassDefinition).%OpenId(s,,.sc)
 		b:$$$ISERR(sc)
 		continue:d.System 			// assume customers don't use/need this
-		set classes(s) = d.%ConstructClone(1)
-		set cnt = cnt + ..AddRelated(d, .classes, includePropTypes)
+		set classes(s) = $s(clone:d.%ConstructClone(1), 1:"")
+		set cnt = cnt + ..AddRelated(d, .classes, includePropTypes, includeForeignKeys, clone)
 	}
 	
 	// Also consider picking up property types
@@ -544,21 +687,21 @@ ClassMethod AddRelated(def As %Dictionary.ClassDefinition, ByRef classes, includ
 			set d = ##class(%Dictionary.ClassDefinition).%OpenId(t,,.sc)
 			b:$$$ISERR(sc)
 			continue:d.System 			// assume customers don't use/need this
-			set classes(t) = d.%ConstructClone(1)
-			set cnt = cnt + ..AddRelated(d, .classes, includePropTypes, includeForeignKeys)
+			set classes(t) = $s(clone:d.%ConstructClone(1), 1:"")
+			set cnt = cnt + ..AddRelated(d, .classes, includePropTypes, includeForeignKeys, clone)
 		}
 	}
 	
 	if (includeForeignKeys) {
 		for i = 1:1:def.ForeignKeys.Count() {
-			set t = def.ForeignKeys.GetAt(i).Type
+			set t = def.ForeignKeys.GetAt(i).ReferencedClass
 			continue:$e(t)="%" 			// skip obvious system classes
 			continue:$d(classes(t)) 	// skip classes we already listed
 			set d = ##class(%Dictionary.ClassDefinition).%OpenId(t,,.sc)
 			b:$$$ISERR(sc)
 			continue:d.System 			// assume customers don't use/need this
-			set classes(t) = d.%ConstructClone(1)
-			set cnt = cnt + ..AddRelated(d, .classes, includePropTypes, includeForeignKeys)
+			set classes(t) = $s(clone:d.%ConstructClone(1), 1:"")
+			set cnt = cnt + ..AddRelated(d, .classes, includePropTypes, includeForeignKeys, clone)
 		}
 	}
 	

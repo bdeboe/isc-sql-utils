@@ -25,6 +25,16 @@ do ##class(bdb.sql.StorageUtils).TableSize("MySchema.MyTable")
 CALL bdb_sql.TableSize('MySchema.MyTable')
 ```
 
+## Exporting a table and its contents
+
+This one will likely find its way into the product after a little more polishing, but it does exactly what the title says. For tables with regular storage, only the master map globals will be exported and indices will be rebuilt when running the `ImportTable()` method.
+
+```ObjectScript
+do ##class(bdb.sql.StorageUtils).ExportTable("SQLUser.NATION","/tmp/table.xml.gz")
+...
+do ##class(bdb.sql.StorageUtils).ImportTable("/tmp/table.xml.gz")
+```
+
 ## Adopting Extent Sets
 
 We've been recommending the use of [extent sets](https://docs.intersystems.com/irislatest/csp/documatic/%25CSP.Documatic.cls?&LIBRARY=%25SYS&CLASSNAME=%25Library.Persistent#USEEXTENTSET) for many years now, but sadly cannot make this the default behaviour for newly created classes because of backwards compatibility issues it'd cause. 
