@@ -218,7 +218,7 @@ ClassMethod CompressStreamsJob(location As %String, startSub As %Binary = "", en
 
 /// Return true if this buffer looks like it is not compressible.
 /// Check for small buffer, known prefixes of compressed data and check a small segment of the buffer for compressibility
-ClassMethod NotCompressible(data As %String) As %Boolean [ Internal, Private ]
+ClassMethod NotCompressible(data As %String, minimalSavings As %Numeric = 0.8) As %Boolean [ Internal, Private ]
 {
 	Set len=$length(data)
 	#; Only compress when first block is at least 1k
@@ -244,7 +244,7 @@ ClassMethod NotCompressible(data As %String) As %Boolean [ Internal, Private ]
 	If $extract(buf,5,8)=$c(102,116,121,112) RETURN 1 ; mp4
 	If $extract(buf,5,10)=$c(102,116,121,112,113,116)||($extract(buf,5,8)=$c(109,111,111,118)) RETURN 1 ; mov
 	#; Try compressing first 4k, if this does not get a good compression ratio (80% or less) with lz4 skip compression
-	If $length($System.Util.Compress($extract(data,1,4096),"zstd"))/$select(len>4096:4096,1:len)>0.8 RETURN 1
+	If $length($System.Util.Compress($extract(data,1,4096),"zstd"))/$select(len>4096:4096,1:len)>minimalSavings RETURN 1
 	RETURN 0
 }
 
