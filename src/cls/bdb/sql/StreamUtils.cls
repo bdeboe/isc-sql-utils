@@ -250,4 +250,158 @@ ClassMethod NotCompressible(data As %String, minimalCompressionRate As %Numeric 
 	RETURN 0
 }
 
+ClassMethod ChangeStreamType(className As %String, verbose As %Boolean = 1, changeFrom As %List = {$lb("%Library.GlobalCharacterStream", "%Library.GlobalBinaryStream")}) As %Status
+{
+#define PromptContinue(%msg) write !,%msg,! ##continue
+    read "Do you want to continue? [Y|n] ",yes#1 ##continue
+    return:(yes'="")&&($$$UPPER(yes)'="Y") $$$OK 
+
+    set sc = $$$OK
+    try {
+
+        set class = ##class(%Dictionary.CompiledClass).%OpenId(className,,.sc)
+        quit:$$$ISERR(sc)
+    	set storage = ##class(%Dictionary.CompiledStorage).%OpenId(className_"||"_class.StorageStrategy)
+		
+        write:verbose !,"Reviewing stream properties in class '",className,"' for types: ",$lts(changeFrom,", ")
+        
+        set ptr = 0
+        while $listnext(changeFrom, ptr, c) { set changeFrom(c) = "" }
+
+        kill try
+        for i = 1:1:class.Properties.Count() {
+            set prop = class.Properties.GetAt(i)
+            continue:'$d(changeFrom(prop.Type))
+
+            set try(prop.SqlFieldName) = prop
+        }
+
+        #dim storageData as %Dictionary.CompiledStorageData
+        #dim storageValue as %Dictionary.CompiledStorageDataValue
+        for i = 1:1:storage.Data.Count() {
+            set storageData = storage.Data.GetAt(i) 
+            for j = 1:1:storageData.Values.Count() {
+                set storageValue = storageData.Values.GetAt(j), 
+                    propName = storageValue.Value
+                if (propName'="") && $d(try(propName), prop) {
+                    set change(propName, "p") = prop, 
+                        change(propName, "s") = storageValue
+                    kill try(propName)
+                }
+            }
+        }
+
+        if $d(try) {
+            if 'verbose {
+                return $$$ERROR($$$GeneralError, "Unable to find storage location for some of the stream properties. Run interactively for more options.")
+            } else {
+                write !,"Unable to find storage location for these properties:"
+                set propName = ""
+                for {
+                    set propName = $order(try(propName),1,prop)
+                    quit:propName=""
+                    write !,"   - ",prop.Name," (",prop.Type,")"
+                }
+            }
+            if $d(change) {
+                set propName = "", lst = ""
+                for {
+                    set propName = $order(try(propName),1,prop)
+                    quit:propName=""
+                    set lst = lst _ $lb(prop.Name)
+                }
+                $$$PromptContinue("Only the following properties can be changed: "_lst)
+            } else {
+                write:verbose !,"No properties left to change"
+                return $$$OK
+            }
+        }
+
+        // by now we have a set of properties and their storage location
+        if verbose {
+            write !!,"The following properties will be changed: "
+            set propName = ""
+            for {
+                set propName = $order(change(propName))
+                quit:propName=""
+                write !,"   - ",propName," (",change(propName,"p").Type,")"
+                set storageValue = change(propName,"s")
+                set str = storage.DataLocation_"(%ID"_$s(storageValue.parent.Subscript'="":","_storageValue.parent.Subscript,1:"")_")"
+                if (storageValue.parent.Structure="listnode") {
+                    set str = "$lg("_str_", "_storageValue.Name_")"
+                } elseif (storageValue.parent.Structure="piece") {
+                    set str = "$piece("_str_", """_storageValue.parent.Delimiter_""", "_storageValue.Name_")"
+                } else {
+                    return $$$ERROR($$$GeneralError, "Unsupported storage structure: "_storageValue.parent.Structure)
+                }
+                write !,"         with %SID at ",str
+                set str = change(propName,"p").Parameters.GetAt("LOCATION")
+                set:str="" str = storage.StreamLocation
+                set change(propName,"g")=str
+                write !,"         and stream data at ",str,"(%SID)"
+            }
+        }
+
+        // TODO: change class def - this is the easy part!
+
+        // now scan through the extent and change individual stream references
+        set glo = storage.DataLocation
+        set id = ""
+        for {
+            set id = $order(@glo@(id),1,d)
+            quit:id=""
+
+            set propName = ""
+            for {
+                set propName = $order(change(propName))
+                quit:propName=""
+
+                set storageValue = change(propName,"s"),
+                    sub = storageValue.parent.Subscript,
+                    struc = storageValue.parent.Structure,
+                    data = $s(sub="":d, 1:$g(@glo@(id,sub))),
+                    sid = $lg($case(struc,"listnode":$lg(data,storageValue.Name),"piece":$p(data,storageValue.parent.Delimiter,storageValue.Name)))
+                
+                set:$e(sid)=$c(0) sid = $e(sid,2,*)
+                
+                // by now it should be $lb($lb("^global",sid),...)
+                set sid = $lg($lg(sid),2)_""
+                
+                // now convert stream header to "<maxNodeNumber>,<iosize>"
+                set header = $g(@(change(propName,"g"))@(+sid))_","_$g(@(change(propName,"g"))@(+sid,0))
+                set @(change(propName,"g"))@(+sid) = header
+                kill @(change(propName,"g"))@(+sid,0)
+
+                // and set simple SID into data again
+                if (sub)="" {
+                    if (struc="listnode") {
+                        set $li(@glo@(id),storageValue.Name) = sid
+                    } else {
+                        set $piece(@glo@(id), storageValue.parent.Delimiter, storageValue.Name) = sid
+                    }
+                } else {
+                    if (struc="listnode") {
+                        set $li(@glo@(id, sub),storageValue.Name) = sid
+                    } else {
+                        set $piece(@glo@(id, sub), storageValue.parent.Delimiter, storageValue.Name) = sid
+                    }
+                }
+            }
+        }
+
+    } catch (ex) {
+        set sc = ex.AsStatus()
+    }
+    
+	if verbose {
+		if $$$ISERR(sc) {
+			do $system.OBJ.DisplayError()
+		}
+		write !
+	}
+
+    kill ^IRIS.Temp.ChangeStreamType($job)
+    quit sc
+}
+
 }
