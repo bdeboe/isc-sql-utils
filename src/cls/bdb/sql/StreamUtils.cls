@@ -5,10 +5,12 @@
 Class bdb.sql.StreamUtils
 {
 
+Parameter MINIMALCOMPRESSIONRATE = 0.8;
+
 /// Inspects the stream fields in class <var>className</var> and, if they are compressible,
 /// launches <var>jobs</var> jobs to try and compress them.
 /// Use <var>verbose</var> for an interactive version.
-ClassMethod CompressStreams(className As %String, verbose As %Boolean = 1, lock As %Boolean = 1, jobs As %Integer = {$SYSTEM.Util.NumberOfCPUs()}) As %Status
+ClassMethod CompressStreams(className As %String, verbose As %Boolean = 1, lock As %Boolean = 1, jobs As %Integer = {$SYSTEM.Util.NumberOfCPUs()}, minimalCompressionRate As %Numeric = {..#MINIMALCOMPRESSIONRATE}) As %Status
 {
 #define PromptContinue(%msg) write !,%msg,! ##continue
     read "Do you want to continue? [Y|n] ",yes#1 ##continue
@@ -101,7 +103,7 @@ ClassMethod CompressStreams(className As %String, verbose As %Boolean = 1, lock 
 
             if jobs<=1 {
 
-                set sc = ..CompressStreamsJob(location, "", "", lock, $job)
+                set sc = ..CompressStreamsJob(location, "", "", lock, $job, minimalCompressionRate)
                 quit:$$$ISERR(sc)
 
             } else {
@@ -114,9 +116,9 @@ ClassMethod CompressStreams(className As %String, verbose As %Boolean = 1, lock 
                 }
                 set split = $lg(split,2)
 
-                do wqm.Queue("##class("_$classname()_").CompressStreamsJob", location, "", $lg(split), lock, $job)
+                do wqm.Queue("##class("_$classname()_").CompressStreamsJob", location, "", $lg(split), lock, $job, minimalCompressionRate)
                 for i = 1:1:$ll(split) {
-                    do wqm.Queue("##class("_$classname()_").CompressStreamsJob", location, $lg(split,i), $lg(split,i+1), lock, $job)
+                    do wqm.Queue("##class("_$classname()_").CompressStreamsJob", location, $lg(split,i), $lg(split,i+1), lock, $job, minimalCompressionRate)
                 }
 
                 set sc = wqm.WaitForComplete()
@@ -142,7 +144,7 @@ ClassMethod CompressStreams(className As %String, verbose As %Boolean = 1, lock 
 }
 
 /// INTERNAL METHOD - DO NOT INVOKE - see <method>CompressStreams</method>
-ClassMethod CompressStreamsJob(location As %String, startSub As %Binary = "", endSub As %Binary = "", lock As %Boolean = 1, job As %Integer = 0) As %Status [ Internal ]
+ClassMethod CompressStreamsJob(location As %String, startSub As %Binary = "", endSub As %Binary = "", lock As %Boolean = 1, job As %Integer = 0, minimalCompressionRate As %Numeric = {..#MINIMALCOMPRESSIONRATE}) As %Status [ Internal ]
 {
     set sc = $$$OK
     try {
@@ -169,7 +171,7 @@ ClassMethod CompressStreamsJob(location As %String, startSub As %Binary = "", en
                     ioSize = @location@(i,0)
             }
 
-            if ..NotCompressible($g(@location@(i,1))) {
+            if ..NotCompressible($g(@location@(i,1)), minimalCompressionRate) {
                 set cSkipped = cSkipped+1
                 continue
             }
@@ -218,7 +220,7 @@ ClassMethod CompressStreamsJob(location As %String, startSub As %Binary = "", en
 
 /// Return true if this buffer looks like it is not compressible.
 /// Check for small buffer, known prefixes of compressed data and check a small segment of the buffer for compressibility
-ClassMethod NotCompressible(data As %String, minimalSavings As %Numeric = 0.8) As %Boolean [ Internal, Private ]
+ClassMethod NotCompressible(data As %String, minimalCompressionRate As %Numeric = {..#MINIMALCOMPRESSIONRATE}) As %Boolean [ Internal, Private ]
 {
 	Set len=$length(data)
 	#; Only compress when first block is at least 1k
@@ -244,7 +246,7 @@ ClassMethod NotCompressible(data As %String, minimalSavings As %Numeric = 0.8) A
 	If $extract(buf,5,8)=$c(102,116,121,112) RETURN 1 ; mp4
 	If $extract(buf,5,10)=$c(102,116,121,112,113,116)||($extract(buf,5,8)=$c(109,111,111,118)) RETURN 1 ; mov
 	#; Try compressing first 4k, if this does not get a good compression ratio (80% or less) with lz4 skip compression
-	If $length($System.Util.Compress($extract(data,1,4096),"zstd"))/$select(len>4096:4096,1:len)>minimalSavings RETURN 1
+	If $length($System.Util.Compress($extract(data,1,4096),"zstd"))/$select(len>4096:4096,1:len)>minimalCompressionRate RETURN 1
 	RETURN 0
 }
 
