@@ -250,7 +250,7 @@ ClassMethod NotCompressible(data As %String, minimalCompressionRate As %Numeric 
 	RETURN 0
 }
 
-ClassMethod ChangeStreamType(className As %String, verbose As %Boolean = 1, changeFrom As %List = {$lb("%Library.GlobalCharacterStream", "%Library.GlobalBinaryStream")}) As %Status
+ClassMethod ChangeStreamType(className As %String, verbose As %Boolean = 1, changeFrom As %List = {$lb("%Library.GlobalCharacterStream", "%Library.GlobalBinaryStream")}, lock As %Boolean = 0, jobs As %Integer = 0) As %Status
 {
 #define PromptContinue(%msg) write !,%msg,! ##continue
     read "Do you want to continue? [Y|n] ",yes#1 ##continue
@@ -284,8 +284,9 @@ ClassMethod ChangeStreamType(className As %String, verbose As %Boolean = 1, chan
                 set storageValue = storageData.Values.GetAt(j), 
                     propName = storageValue.Value
                 if (propName'="") && $d(try(propName), prop) {
-                    set change(propName, "p") = prop, 
-                        change(propName, "s") = storageValue
+                    set change(propName) = $lb(prop.Name, prop.Type, storageValue.parent.Subscript, storageValue.Name, storageValue.parent.Structure)
+                    set loc = prop.Parameters.GetAt("LOCATION")
+                    set $li(change(propName),6) = $s(loc="":storage.StreamLocation, 1:loc)
                     kill try(propName)
                 }
             }
@@ -306,9 +307,9 @@ ClassMethod ChangeStreamType(className As %String, verbose As %Boolean = 1, chan
             if $d(change) {
                 set propName = "", lst = ""
                 for {
-                    set propName = $order(try(propName),1,prop)
+                    set propName = $order(change(propName), 1, prop)
                     quit:propName=""
-                    set lst = lst _ $lb(prop.Name)
+                    set lst = lst _ $lb(prop.name)
                 }
                 $$$PromptContinue("Only the following properties can be changed: "_lst)
             } else {
@@ -322,73 +323,58 @@ ClassMethod ChangeStreamType(className As %String, verbose As %Boolean = 1, chan
             write !!,"The following properties will be changed: "
             set propName = ""
             for {
-                set propName = $order(change(propName))
+                set propName = $order(change(propName), 1, info)
                 quit:propName=""
-                write !,"   - ",propName," (",change(propName,"p").Type,")"
-                set storageValue = change(propName,"s")
-                set str = storage.DataLocation_"(%ID"_$s(storageValue.parent.Subscript'="":","_storageValue.parent.Subscript,1:"")_")"
-                if (storageValue.parent.Structure="listnode") {
-                    set str = "$lg("_str_", "_storageValue.Name_")"
-                } elseif (storageValue.parent.Structure="piece") {
-                    set str = "$piece("_str_", """_storageValue.parent.Delimiter_""", "_storageValue.Name_")"
+                set $lb(name, type, sub, index, struc, location) = info
+                write !,"   - ",propName," (",type,")"
+                set str = storage.DataLocation_"(%ID"_$s(sub'="":","_sub,1:"")_")"
+                if (struc="listnode") {
+                    set str = "$lg("_str_", "_index_")"
+                } elseif (struc="piece") {
+                    set str = "$piece("_str_", ""^"", "_index_")"
                 } else {
-                    return $$$ERROR($$$GeneralError, "Unsupported storage structure: "_storageValue.parent.Structure)
+                    return $$$ERROR($$$GeneralError, "Unsupported storage structure: "_struc)
                 }
                 write !,"         with %SID at ",str
-                set str = change(propName,"p").Parameters.GetAt("LOCATION")
-                set:str="" str = storage.StreamLocation
-                set change(propName,"g")=str
-                write !,"         and stream data at ",str,"(%SID)"
+                write !,"         and stream data at ",location,"(%SID)"
             }
         }
 
         // TODO: change class def - this is the easy part!
 
         // now scan through the extent and change individual stream references
-        set glo = storage.DataLocation
-        set id = ""
-        for {
-            set id = $order(@glo@(id),1,d)
-            quit:id=""
+        write:verbose !,"Now change stream type in ",storage.DataLocation,$s(jobs>1:" using "_jobs_" jobs",1:" using a single process")
+        
+        kill ^IRIS.Temp.CompressStreams($j)
 
-            set propName = ""
-            for {
-                set propName = $order(change(propName))
-                quit:propName=""
+        if jobs<=1 {
 
-                set storageValue = change(propName,"s"),
-                    sub = storageValue.parent.Subscript,
-                    struc = storageValue.parent.Structure,
-                    data = $s(sub="":d, 1:$g(@glo@(id,sub))),
-                    sid = $lg($case(struc,"listnode":$lg(data,storageValue.Name),"piece":$p(data,storageValue.parent.Delimiter,storageValue.Name)))
-                
-                set:$e(sid)=$c(0) sid = $e(sid,2,*)
-                
-                // by now it should be $lb($lb("^global",sid),...)
-                set sid = $lg($lg(sid),2)_""
-                
-                // now convert stream header to "<maxNodeNumber>,<iosize>"
-                set header = $g(@(change(propName,"g"))@(+sid))_","_$g(@(change(propName,"g"))@(+sid,0))
-                set @(change(propName,"g"))@(+sid) = header
-                kill @(change(propName,"g"))@(+sid,0)
+            set sc = ..ChangeStreamTypeJob(storage.DataLocation, "", "", .change, lock, $job)
+            quit:$$$ISERR(sc)
 
-                // and set simple SID into data again
-                if (sub)="" {
-                    if (struc="listnode") {
-                        set $li(@glo@(id),storageValue.Name) = sid
-                    } else {
-                        set $piece(@glo@(id), storageValue.parent.Delimiter, storageValue.Name) = sid
-                    }
-                } else {
-                    if (struc="listnode") {
-                        set $li(@glo@(id, sub),storageValue.Name) = sid
-                    } else {
-                        set $piece(@glo@(id, sub), storageValue.parent.Delimiter, storageValue.Name) = sid
-                    }
-                }
+        } else {
+            
+            set wqm = $SYSTEM.WorkMgr.Initialize("/multicompile=1")
+
+            set split = $$SplitSize^%GSIZE($e(storage.DataLocation,2,*), "N", jobs)
+            if $lg(split)'=1 {
+                set sc = $$$ERROR($$$GeneralError,$lg(split,2))
+                quit
             }
+            set split = $lg(split,2)
+
+            do wqm.Queue("##class("_$classname()_").ChangeStreamTypeJob", storage.DataLocation, "", $lg(split), .change, lock, $job)
+            for i = 1:1:$ll(split) {
+                do wqm.Queue("##class("_$classname()_").ChangeStreamTypeJob", storage.DataLocation, $lg(split,i), $lg(split,i+1), .change, lock, $job)
+            }
+
+            set sc = wqm.WaitForComplete()
+            quit:$$$ISERR(sc)
         }
 
+        write:verbose !,"Changed ",$g(^IRIS.Temp.ChangeStreamType($job,"c"))," streams (",$g(^IRIS.Temp.ChangeStreamType($job,"l"))," were locked and ",$g(^IRIS.Temp.ChangeStreamType($job,"s"))," were in the new format already)"
+        kill ^IRIS.Temp.ChangeStreamType($job)
+        
     } catch (ex) {
         set sc = ex.AsStatus()
     }
@@ -401,6 +387,110 @@ ClassMethod ChangeStreamType(className As %String, verbose As %Boolean = 1, chan
 	}
 
     kill ^IRIS.Temp.ChangeStreamType($job)
+    quit sc
+}
+
+/// INTERNAL METHOD - DO NOT INVOKE - see <method>ChangeStreamType</method>
+ClassMethod ChangeStreamTypeJob(location As %String, startSub As %Binary = "", endSub As %Binary = "", ByRef props, lock As %Boolean = 1, job As %Integer = 0) As %Status [ Internal ]
+{
+    set sc = $$$OK
+    try {
+        
+        set i = startSub, 
+            endSub = $s(endSub="":"", 1:$o(@location@(endSub))),
+            (cChanged, cSkipped, cLocked) = 0,
+            unlock = ""
+        for {
+            set i = $order(@location@(i),1,d)
+            quit:i=endSub
+            
+            if lock {
+                lock @location@(i):0
+                if '$test {
+                    // if we cannot acquire a lock, just skip. 
+                    // These should be exceptions anyway
+                    set cLocked = cLocked+1
+                    continue
+                } else {
+                    set unlock = $NAME(@location@(i))
+                }
+            }
+
+            // props(propName) = { "index": <pos in $list or $piece>,
+            //                     "sub": <additional subscript>, 
+            //                     "struc": <listnode|piece>, 
+            //                     "delimiter": <$piece delimiter>,
+            //                     "global": <stream global> }
+            set propName = ""
+            for {
+                set propName = $order(props(propName), 1, info)
+                quit:propName=""
+    
+                set $lb(name, type, sub, index, struc, streamLocation) = info
+                set data = $s(sub="":d, 1:$g(@location@(i,sub)))
+                if struc="listnode" {
+                    set sid = $lg(data, index)
+                } elseif struc="piece" {
+                    set sid = $piece(data, "^", index)
+                } else {
+                    return $$$ERROR($$$GeneralError, "Unsupported storage structure: "_struc)
+                }
+
+                if '$lv(sid) {
+                    // %SID must already be in the target format
+                    set cSkipped = cSkipped+1
+                    continue
+                }
+                
+                set sid = $lg(sid)
+                
+                set:$e(sid)=$c(0) sid = $e(sid,2,*)
+                
+                // by now it should be $lb($lb("^global",sid),...)
+                set sid = $lg($lg(sid),2)_""
+                
+                // now set stream header to "<maxNodeNumber>,<iosize>"
+                set @streamLocation@(+sid) = (+$o(@streamLocation@(+sid,""),-1))_","_$g(@streamLocation@(+sid,0))
+                kill @streamLocation@(+sid,0)
+
+                // and set simple SID into data again
+                if (sub)="" {
+                    if (struc="listnode") {
+                        set $li(@location@(i), index) = sid
+                    } else {
+                        set $piece(@location@(i), "^", index) = sid
+                    }
+                } else {
+                    if (struc="listnode") {
+                        set $li(@location@(i, sub), index) = sid
+                    } else {
+                        set $piece(@location@(i, sub), "^", index) = sid
+                    }
+                }
+            }
+
+            
+            if (unlock'="") {
+                lock -@unlock
+                set unlock=""
+            }
+
+            set cChanged = cChanged+1
+
+        }
+
+    } catch (ex) {
+        set sc = ex.AsStatus()
+    }
+
+    if ($g(unlock)'="") {
+        lock -@unlock
+    }
+
+    set x = $i(^IRIS.Temp.ChangeStreamType(job,"c"), cChanged),
+        x = $i(^IRIS.Temp.ChangeStreamType(job,"s"), cSkipped),
+        x = $i(^IRIS.Temp.ChangeStreamType(job,"l"), cLocked)
+
     quit sc
 }
 
