@@ -250,7 +250,7 @@ ClassMethod NotCompressible(data As %String, minimalCompressionRate As %Numeric 
 	RETURN 0
 }
 
-ClassMethod ChangeStreamType(className As %String, verbose As %Boolean = 1, changeFrom As %List = {$lb("%Library.GlobalCharacterStream", "%Library.GlobalBinaryStream")}, lock As %Boolean = 0, jobs As %Integer = 0) As %Status
+ClassMethod ChangeStreamType(className As %String, verbose As %Boolean = 1, changeFrom As %List = {$lb("%Library.GlobalCharacterStream", "%Library.GlobalBinaryStream")}, compress As %Boolean = 1, lock As %Boolean = 0, jobs As %Integer = {$SYSTEM.Util.NumberOfCPUs()}) As %Status
 {
 #define PromptContinue(%msg) write !,%msg,! ##continue
     read "Do you want to continue? [Y|n] ",yes#1 ##continue
@@ -349,7 +349,7 @@ ClassMethod ChangeStreamType(className As %String, verbose As %Boolean = 1, chan
 
         if jobs<=1 {
 
-            set sc = ..ChangeStreamTypeJob(storage.DataLocation, "", "", .change, lock, $job)
+            set sc = ..ChangeStreamTypeJob(storage.DataLocation, "", "", .change, compress, lock, $job)
             quit:$$$ISERR(sc)
 
         } else {
@@ -363,9 +363,9 @@ ClassMethod ChangeStreamType(className As %String, verbose As %Boolean = 1, chan
             }
             set split = $lg(split,2)
 
-            do wqm.Queue("##class("_$classname()_").ChangeStreamTypeJob", storage.DataLocation, "", $lg(split), .change, lock, $job)
+            do wqm.Queue("##class("_$classname()_").ChangeStreamTypeJob", storage.DataLocation, "", $lg(split), .change, compress, lock, $job)
             for i = 1:1:$ll(split) {
-                do wqm.Queue("##class("_$classname()_").ChangeStreamTypeJob", storage.DataLocation, $lg(split,i), $lg(split,i+1), .change, lock, $job)
+                do wqm.Queue("##class("_$classname()_").ChangeStreamTypeJob", storage.DataLocation, $lg(split,i), $lg(split,i+1), .change, compress, lock, $job)
             }
 
             set sc = wqm.WaitForComplete()
@@ -391,7 +391,7 @@ ClassMethod ChangeStreamType(className As %String, verbose As %Boolean = 1, chan
 }
 
 /// INTERNAL METHOD - DO NOT INVOKE - see <method>ChangeStreamType</method>
-ClassMethod ChangeStreamTypeJob(location As %String, startSub As %Binary = "", endSub As %Binary = "", ByRef props, lock As %Boolean = 1, job As %Integer = 0) As %Status [ Internal ]
+ClassMethod ChangeStreamTypeJob(location As %String, startSub As %Binary = "", endSub As %Binary = "", ByRef props, compress As %Boolean = 1, lock As %Boolean = 1, job As %Integer = 0) As %Status [ Internal ]
 {
     set sc = $$$OK
     try {
@@ -404,6 +404,8 @@ ClassMethod ChangeStreamTypeJob(location As %String, startSub As %Binary = "", e
             set i = $order(@location@(i),1,d)
             quit:i=endSub
             
+            // we assume the row-level lock is safe enough and no
+            // additional locks are needed at the stream level
             if lock {
                 lock @location@(i):0
                 if '$test {
@@ -450,8 +452,15 @@ ClassMethod ChangeStreamTypeJob(location As %String, startSub As %Binary = "", e
                 set sid = $lg($lg(sid),2)_""
                 
                 // now set stream header to "<maxNodeNumber>,<iosize>"
-                set @streamLocation@(+sid) = (+$o(@streamLocation@(+sid,""),-1))_","_$g(@streamLocation@(+sid,0))
-                kill @streamLocation@(+sid,0)
+                set maxNodeNo = (+$o(@streamLocation@(sid,""),-1))
+                set @streamLocation@(sid) = maxNodeNo_","_$g(@streamLocation@(sid,0))_","_compress
+                kill @streamLocation@(sid,0)
+
+                if compress && '..NotCompressible($g(@streamLocation@(sid,1))) {
+                    for j = 1:1:maxNodeNo {
+                        set @streamLocation@(sid,j) = $system.Util.Compress(@streamLocation@(sid,j),"zstd")
+                    }
+                }
 
                 // and set simple SID into data again
                 if (sub)="" {
