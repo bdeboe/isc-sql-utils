@@ -22,6 +22,7 @@ Use at your own risk, or yell at me in the Issues section :-)
   - [Taking a snapshot of your Statement Index](#taking-a-snapshot-of-your-statement-index)
   - [Table Usage Stats](#table-usage-stats)
 - [Miscellaneous](#miscellaneous)
+  - [Generic table logging](#generic-table-logging)
   - [Adopting Extent Sets](#adopting-extent-sets)
   - [Projecting a table from a different namespace](#projecting-a-table-from-a-different-namespace)
   - [Projecting a "list of" collection property](#projecting-a-list-of-collection-property)
@@ -91,6 +92,12 @@ do ##class(bdb.sql.StatementUtils).AddTableUsageStats("MySchema")
 
 
 ## Miscellaneous
+
+### Generic table logging
+
+Many customers leverage Triggers to automatically log updates to a row as kind of an application-level audit facility. This utility class will automatically generate an UPDATE/DELETE trigger for logging any field changes to the `bdb.logme.Log`. All you need to do is have your `%Persistent` class inherit from `bdb.logme.Trigger` and the proper trigger code will be generated for you. See the class reference for more details on fine-tuning the default behaviour.
+
+Please note this is meant as a fine-grained convenience utility and should not be used as a replacement for the fully-secured [IRIS Auditing feature](https://docs.intersystems.com/iris20212/csp/docbook/DocBook.UI.Page.cls?KEY=AAUDIT).
 
 ### Adopting Extent Sets
 
