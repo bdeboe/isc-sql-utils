@@ -1,6 +1,7 @@
 /// Utilities for working with Streams
 /// <ul>
 /// <li><method>CompressStreams</method></li>
+/// <li><method>ChangeStreamTypes</method></li>
 /// </ul>
 Class bdb.sql.StreamUtils
 {
@@ -250,6 +251,8 @@ ClassMethod NotCompressible(data As %String, minimalCompressionRate As %Numeric 
 	RETURN 0
 }
 
+/// Changes the stream ID and header structure for property values of the old stream
+/// type classes into the recommended %Stream.* classes so they can be compressed.
 ClassMethod ChangeStreamType(className As %String, verbose As %Boolean = 1, changeFrom As %List = {$lb("%Library.GlobalCharacterStream", "%Library.GlobalBinaryStream")}, compress As %Boolean = 1, lock As %Boolean = 0, jobs As %Integer = {$SYSTEM.Util.NumberOfCPUs()}) As %Status
 {
 #define PromptContinue(%msg) write !,%msg,! ##continue
@@ -340,8 +343,6 @@ ClassMethod ChangeStreamType(className As %String, verbose As %Boolean = 1, chan
             }
         }
 
-        // TODO: change class def - this is the easy part!
-
         // now scan through the extent and change individual stream references
         write:verbose !,"Now change stream type in ",storage.DataLocation,$s(jobs>1:" using "_jobs_" jobs",1:" using a single process")
         
@@ -374,6 +375,10 @@ ClassMethod ChangeStreamType(className As %String, verbose As %Boolean = 1, chan
 
         write:verbose !,"Changed ",$g(^IRIS.Temp.ChangeStreamType($job,"c"))," streams (",$g(^IRIS.Temp.ChangeStreamType($job,"l"))," were locked and ",$g(^IRIS.Temp.ChangeStreamType($job,"s"))," were in the new format already)"
         kill ^IRIS.Temp.ChangeStreamType($job)
+        
+
+        // TODO: change class def - this is the easy part!
+        write:verbose !!,"Don't forget to update the property types in the class definition for changed stream types"
         
     } catch (ex) {
         set sc = ex.AsStatus()
