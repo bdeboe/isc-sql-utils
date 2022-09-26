@@ -858,6 +858,120 @@ ClassMethod TableSizeSQLClose(ByRef qHandle As %Binary) As %Status [ Internal, S
 	quit $$$OK
 }
 
+/* // Experimental
+ClassMethod IndexSize(tableName As %String, Output info, fast As %Boolean = 0, verbose As %Boolean = 1) As %Status
+{
+	kill info
+	set sc = $$$OK
+	try {
+
+        if '$system.SQL.Schema.TableExists(tableName, .metadata) {
+			set sc = $$$ERROR($$$TableDoesNotExist, tableName)
+			quit
+		}
+        set className = $lg(metadata,3)
+		
+		write:verbose !,"Fetching index sizes for table '",tableName,"':",!
+
+		// if we have no blockcount info, we should gather stats
+		//TODO: figure out why sometimes TT doesn't write block counts into class def
+		//&SQL(SELECT COUNT(*) INTO :bc FROM %Dictionary.StorageSQLMapDefinition WHERE parent->parent = :className AND BlockCount IS NOT NULL)
+		//if 'bc {
+		//	set sc = $SYSTEM.SQL.Stats.Table.GatherTableStats(tableName)
+		//	quit:$$$ISERR(sc)
+		//}
+		
+		set rs = ##class(%SQL.Statement).%ExecDirect(,"SELECT i.INDEX_NAME, i.TYPE, i.""GLOBAL"", m.BLOCK_COUNT, m.BLOCK_COUNT_TYPE FROM %SQL_Manager.Indices(?, ?) i LEFT JOIN %SQL_Manager.MapBlockCount(?, ?) m ON i.SQL_MAP_NAME = m.SQL_MAP_NAME", $piece(tableName,".",1), $piece(tableName,".",2), $piece(tableName,".",1), $piece(tableName,".",2))
+		while rs.%Next() {
+			continue:rs.%Get("TYPE")="Data/Master"
+			
+			set glo($p(rs.%Get("GLOBAL"),"(",1), rs.%Get("GLOBAL")) = $lb(rs.%Get("INDEX_NAME"), rs.%Get("TYPE"), rs.%Get("BLOCK_COUNT"), rs.%Get("BLOCK_COUNT_TYPE"))
+			set x = $i(glo($p(rs.%Get("GLOBAL"),"(",1)), $zabs(rs.%Get("BLOCK_COUNT")))
+		}
+		
+		set rsize = ##class(%ResultSet).%New("%SYS.GlobalQuery:Size")
+		set global = ""
+        for {
+            set global = $order(glo(global),1,totalBlocks)
+			quit:global=""
+            
+			set dir = ##class(%SYS.Namespace).GetGlobalDest(,global)
+			do rsize.%Execute($p(dir,"^",2), "", $e(global,2,*),,,fast)
+            if 'rsize.%Next() {
+				do Warn("No global size info for "_global)
+				continue
+			}
+			set sizeAllocated = rsize.%GetData(2), sizeUsed = rsize.%GetData(3)
+
+			set location = ""
+			for {
+				set location = $order(glo(global, location), 1, idxInfo)
+				quit:location=""
+
+				set info($lg(idxInfo,1)) = $li(idxInfo,2,2)_$lb(location, $fnumber(sizeAllocated * $zabs($lg(idxInfo,3)) / $s(totalBlocks:totalBlocks, 1:1),"",0), $s(totalBlocks=$lg(idxInfo,3):sizeUsed, 1:""), $lg(idxInfo,4))
+			}
+		}
+
+    } catch (ex) {
+        set sc = ex.AsStatus()
+    }
+	if verbose {
+		if $$$ISERR(sc) {
+			do Warn($system.Status.GetErrorText(sc)) 
+		}
+		write !
+	}
+    quit sc
+
+Warn(message, level="WARNING")
+	set info("warnings",$i(info("warnings"))) = message
+	write:verbose !,level,": ",message
+}
+
+Query IndexSizeSQL(tableName As %String, fastSize As %Boolean = 0, showWarnings As %Boolean = 0) As %Query(ROWSPEC = "IndexName:%String,IndexType:%String,Location:%String,EstimatedSizeMB:%Integer,MeasuredSizeMB:%Integer,EstimateType:%String") [ SqlName = IndexSize, SqlProc ]
+{
+}
+
+ClassMethod IndexSizeSQLExecute(ByRef qHandle As %Binary, tableName As %String, fastSize As %Boolean = 0, showWarnings As %Boolean = 0) As %Status [ Internal, ServerOnly = 1 ]
+{
+	kill qHandle
+	set sc = ..IndexSize(tableName, .info, fastSize, 0)
+	quit:$$$ISERR(sc) sc
+
+	set idx = ""
+	for {
+		set idx = $order(info(idx),1,idxInfo)
+		quit:idx=""
+
+		set qHandle($i(qHandle)) = $lb(idx)_idxInfo
+	}
+	set qHandle = 0
+
+	if showWarnings {
+		for i = 1:1:$g(info("warnings")) {
+			write !,"WARNING: ",$g(info("warnings",i)) 
+		}
+	}
+	quit sc
+}
+
+ClassMethod IndexSizeSQLFetch(ByRef qHandle As %Binary, Output Row As %List, Output AtEnd As %Boolean) As %Status [ Internal, ServerOnly = 1 ]
+{
+	set qHandle = $order(qHandle(qHandle),1,data)
+	if qHandle="" {
+		set AtEnd = 1, Row = ""
+	} else {
+		set AtEnd = 0, Row = data
+	}
+	quit $$$OK
+}
+
+ClassMethod IndexSizeSQLClose(ByRef qHandle As %Binary) As %Status [ Internal, ServerOnly = 1 ]
+{
+	kill qHandle
+	quit $$$OK
+}
+*/
 /// Experimental
 ClassMethod BuildValuesFromStats(tableName As %String, globalName As %String = "^||values", verbose As %Boolean = 1) As %Status [ Internal ]
 {
@@ -910,8 +1024,6 @@ ClassMethod BuildValuesFromStats(tableName As %String, globalName As %String = "
 				set cardinality = 1 / (propStorage.Selectivity/100) \ 1
 				write:verbose !,"Column #",fields," '",propStorage.Name,"' (",propDef.Type,") has cardinality ",cardinality
 				set @globalName@(fields)=cardinality
-				set maxLen = propDef.Parameters.GetAt("MAXLEN")
-				set:maxLen>10 maxLen = 10
 				for j = 0:1:cardinality-1 {
 					if (propDef.Type="%Library.Integer") {
 						set value = j
@@ -924,11 +1036,22 @@ ClassMethod BuildValuesFromStats(tableName As %String, globalName As %String = "
 					} elseif (propDef.Name["FxDayMonthYear") {
 						set value = $tr($zdate($h-j,3),"-")
 					} elseif (propDef.Type="%Library.String") {
-						set value = ##class(%PopulateUtils).String(maxLen)
+						set avgLen = propStorage.AverageFieldSize
+						set minLen = avgLen/2, maxLen = avgLen+(avgLen*2)
+						set:maxLen>propDef.Parameters.GetAt("MAXLEN") maxLen = propDef.Parameters.GetAt("MAXLEN")
+						set:minLen<1 minLen = 1
+						set:maxLen<1 maxLen = 1
+						set value = ##class(%PopulateUtils).StringMin(minLen, maxLen)
 					} else {
 						set value = j
 					}
 					set @globalName@(fields,j) = value
+				}
+
+				if (propStorage.OutlierSelectivity'="") {
+					write:verbose " and ",(100*$p(propStorage.OutlierSelectivity,":",1)\1),"% outlier ",$p(propStorage.OutlierSelectivity,":",2,*)
+					xecute ("(x) set x = "_$p(propStorage.OutlierSelectivity,":",2,*), .outVal)
+					set @globalName@(fields,-1) = $lb(100*$p(propStorage.OutlierSelectivity,":",1),outVal)
 				}
 			}
 			kill props(propDef.Name)
@@ -988,11 +1111,20 @@ ClassMethod PopulateFromStats(tableName As %String, rowCount As %Integer = 1000,
 			kill params
 			set params = fields
 			for j = 1:1:fields {
-				set params(j) = @globalName@(j,$random(@globalName@(j)))
+				if (@globalName@(j)<0) {
+					// unique value: just use i for now
+					set params(j) = i
+				} elseif $d(@globalName@(j,-1),outlier) && ($random(100)<=$lg(outlier)) {
+					// use outlier value
+					set params(j) = $lg(outlier,2,$c(0))
+				} else {
+					set params(j) = @globalName@(j,$random(@globalName@(j)))
+				}
 			}
 			set rs = stmt.%Execute(params...)
 			if rs.%SQLCODE {
 				set sc = $$$ERROR($$$GeneralError, rs.%Message)
+				b
 				quit
 			}
 		}
