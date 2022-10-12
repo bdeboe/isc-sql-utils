@@ -1,7 +1,11 @@
+/// Basic class for inspecting a (CSV) file and inferring the probable datatypes for
+/// each column. Main entry points are <query>ScanFile</query>, which projects a 
+/// result set with one row for each column and <method>InferColumnList</method>, which 
+/// structures that information in a DDL-ready format. 
 Class bdb.sql.InferSchema
 {
 
-ClassMethod PeekFile(Output data, path As %String, qualifiers As %String = "", readLines As %Integer = 100) As %Status
+ClassMethod Peek(Output data, path As %String, qualifiers As %String = "", readLines As %Integer = 100) As %Status [ Internal ]
 {
     #define MaxLineLength 999999
     kill data
@@ -216,18 +220,18 @@ ClassMethod PeekFile(Output data, path As %String, qualifiers As %String = "", r
             }
             set data("stats",col,"count") = count,
                 data("stats",col,"nullPct") = $g(stats(col,"null"))/count,
-                data("stats",col,"lengthAvg") = $g(stats(col,"l"))/count,
-                data("stats",col,"lengthMin") = $o(stats(col,"l","")),
-                data("stats",col,"lengthMax") = $o(stats(col,"l",""),-1)
+                data("stats",col,"length","avg") = $g(stats(col,"l"))/count,
+                data("stats",col,"length","min") = $o(stats(col,"l","")),
+                data("stats",col,"length","max") = $o(stats(col,"l",""),-1)
 
             set stddev = 0
             set l = ""
             for {
                 set l = $order(stats(col,"l",l),1,c)
                 quit:l=""
-                set stddev = stddev + (((data("stats",col,"lengthAvg")-l)**2)*c)
+                set stddev = stddev + (((data("stats",col,"length","avg")-l)**2)*c)
             }
-            set data("stats",col,"lengthStdDev") = $s(count:$zsqr(stddev / count), 1:0)
+            set data("stats",col,"length","stdDev") = $s(count:$zsqr(stddev / count), 1:0)
 
             // derive type
             set nonNull = count - $g(stats(col,"null"))
@@ -239,6 +243,8 @@ ClassMethod PeekFile(Output data, path As %String, qualifiers As %String = "", r
                 set data("stats",col,"type") = "%Date"
             } elseif $g(stats(col,"ts"))=nonNull {
                 set data("stats",col,"type") = "%PosixTime" // refine
+            } elseif data("stats",col,"length","max") > 10000 {
+                set data("stats",col,"type") = "%Stream.GlobalCharacter"
             } else {
                 set data("stats",col,"type") = "%String"
             }
@@ -258,17 +264,17 @@ Log(level, message)
     // TODO: write to %SQL_Diag
 }
 
-Query InferFromFile(path As %String, qualifiers As %String = "") As %Query(ROWSPEC = "name:%String,type:%String,maxLength:%Integer,null:%Boolean") [ SqlName = InferFromFile, SqlProc ]
+Query ScanFile(path As %String, qualifiers As %String = "") As %Query(ROWSPEC = "name:%String,type:%String,maxLength:%Integer,sqlType:%String,null:%Boolean") [ SqlName = ScanFile, SqlProc ]
 {
 }
 
-ClassMethod InferFromFileExecute(qHandle As %Binary, path As %String, qualifiers = "") As %Status [ Internal, ServerOnly = 1 ]
+ClassMethod ScanFileExecute(qHandle As %Binary, path As %String, qualifiers = "") As %Status [ Internal, ServerOnly = 1 ]
 {
     kill qHandle
     set sc = $$$OK
     try {
 
-        set sc = ..PeekFile(.data, path, qualifiers)
+        set sc = ..Peek(.data, path, qualifiers)
         quit:$$$ISERR(sc)
 
         set col = "", qHandle = 0
@@ -287,10 +293,21 @@ ClassMethod InferFromFileExecute(qHandle As %Binary, path As %String, qualifiers
             }
 
             // suggest safe max length
-            set maxLen = (data("stats",col,"lengthMax") + (3 * data("stats",col,"lengthStdDev"))) \ 1
+            set maxLen = (data("stats",col,"length","max") + (3 * data("stats",col,"length","stdDev"))) \ 1 + 1
+
+            // type > sqlType
+            // TODO: maybe do this upstream?
+            set sqlType = $case(data("stats",col,"type"),
+                            "%Integer": "INTEGER",
+                            "%Numeric": "NUMERIC",
+                            "%Date": "DATE",
+                            "%PosixTime": "TIMESTAMP",
+                            "%Stream.GlobalCharacter": "LONGVARCHAR",
+                            "%String": "VARCHAR",
+                            : "VARCHAR") // ?
 
             set qHandle = qHandle+1,
-                qHandle(qHandle) = $lb(name, data("stats",col,"type"), maxLen, (data("stats",col,"nullPct")>0))
+                qHandle(qHandle) = $lb(name, data("stats",col,"type"), maxLen, sqlType, (data("stats",col,"nullPct")>0))
         }
 
     } catch (ex) {
@@ -300,7 +317,7 @@ ClassMethod InferFromFileExecute(qHandle As %Binary, path As %String, qualifiers
     quit sc
 }
 
-ClassMethod InferFromFileFetch(ByRef qHandle As %Binary, Output Row As %List, Output AtEnd As %Boolean) As %Status [ Internal, ServerOnly = 1 ]
+ClassMethod ScanFileFetch(ByRef qHandle As %Binary, Output Row As %List, Output AtEnd As %Boolean) As %Status [ Internal, ServerOnly = 1 ]
 {
 	set qHandle = $order(qHandle(qHandle),1,data)
 	if qHandle="" {
@@ -311,10 +328,33 @@ ClassMethod InferFromFileFetch(ByRef qHandle As %Binary, Output Row As %List, Ou
 	quit $$$OK
 }
 
-ClassMethod InferFromFileClose(ByRef qHandle As %Binary) As %Status [ Internal, ServerOnly = 1 ]
+ClassMethod ScanFileClose(ByRef qHandle As %Binary) As %Status [ Internal, ServerOnly = 1 ]
 {
 	kill qHandle
 	quit $$$OK
+}
+
+/// Returns the inferred column list for the file at <var>path</var>, in a format ready for
+/// wrapping in a <tt>CREATE TABLE t ( ... )</tt> statement.
+ClassMethod InferColumnList(path As %String, qualifiers As %String = "") As %String [ SqlName = InferColumnList, SqlProc ]
+{
+    set str = ""
+    try {
+        set rs = ##class(%SQL.Statement).%ExecDirect(,"SELECT * FROM bdb_sql.ScanFile(?,?)", path, qualifiers)
+        while rs.%Next() {
+            set type = rs.%Get("sqlType")
+            set str = str _ $s(str="":"", 1:", ") _ rs.%Get("name") _ " " _ rs.%Get("sqlType")
+            if type = "VARCHAR" {
+                set str = str _ "(" _ rs.%Get("maxLength") _ ")"
+            }
+
+            set:'rs.%Get("null") str = str _ " NOT NULL"
+        }
+
+    } catch (ex) {
+        set sc = ex.AsStatus() // TODO ?
+    }
+    quit str
 }
 
 }
