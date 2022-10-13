@@ -85,10 +85,20 @@ ClassMethod Peek(Output data, path As %String, qualifiers As %String = "", readL
                 }
             }
 
-            set sep = "", lowVariance = -1
+            set sep = "", bestScore = 0
             for {
                 set sep = $order(sep(sep),1,sum)
                 quit:sep=""
+                set l = "", half = lines/2
+                for {
+                    set l = $o(sep(sep,l),1,cnt)
+                    quit:l=""
+                    set half = half-cnt
+                    if half < 0 {
+                        set (mean,sep(sep,"mean")) = l
+                        quit
+                    }
+                }
                 set (avg,sep(sep,"avg")) = sum / lines,
                     stddev = 0,
                     pieces = 0
@@ -98,19 +108,19 @@ ClassMethod Peek(Output data, path As %String, qualifiers As %String = "", readL
                     set stddev = stddev + (((avg-pieces)**2)*cnt)
                 }
                 set (stddev,sep(sep,"stddev")) = $s(lines:$zsqr(stddev / lines),1:0)
-                if (avg > 1.1) && ((lowVariance < 0) || (stddev < lowVariance)) {
+                if (mean > 1) && ((mean-stddev) > bestScore) {
                     set qf("columnseparator") = sep,
-                        lowVariance = stddev
+                        bestScore = (mean-stddev)
                 }
             }
-            if (lowVariance < 0) {
+            if (bestScore = 0) {
                 do Log("WARNING", "Could not find a suitable column separator, possibly because there is only one column.")
                 set qf("columnseparator") = ","
             }
  
             do Log("INFO", "Assuming the column separator is '"_qf("columnseparator")_"'")
         }
-
+ 
         if $g(header)'="" {
             
             if $g(qf("header"))="" {
