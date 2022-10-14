@@ -263,7 +263,7 @@ ClassMethod Peek(Output data, path As %String, qualifiers As %String = "", readL
                 }
                 set data("stats",col,"scale","stdDev") = $s(count:$zsqr(stddev / count), 1:0)
             }
- b:col=4
+ 
             // derive type
             set nonNull = count - $g(stats(col,"null"))
             if $g(stats(col,"num"))=nonNull {
@@ -271,29 +271,29 @@ ClassMethod Peek(Output data, path As %String, qualifiers As %String = "", readL
                     // somewhat arbitrary criteria, up for refinement
                     if $f($$$UPPER($g(data("stats",col))),"ID") {
                         // if the column name has "ID" in it, consider it a BIGINT
-                        set data("stats",col,"type") = "%BigInt"
+                        set data("stats",col,"type") = "BIGINT"
                     } elseif (nonNull>=50) && (data("stats",col,"max")=1) && (data("stats",col,"min")=0) {
                         // if we only found 1s and 0s, assume boolean
-                        set data("stats",col,"type") = "%Boolean"
+                        set data("stats",col,"type") = "BOOLEAN"
                     } elseif (nonNull>=100) && (data("stats",col,"max")<100) && (data("stats",col,"min")>-100) {
                         // if it's only 2 digits and we were looking at >100 values, 
                         // a TINYINT will likely do
-                        set data("stats",col,"type") = "%TinyInt"
+                        set data("stats",col,"type") = "TINYINT"
                     } else {
-                        set data("stats",col,"type") = "%Integer"
+                        set data("stats",col,"type") = "INTEGER"
                     }
                     
                 } else {
-                    set data("stats",col,"type") = "%Numeric"
+                    set data("stats",col,"type") = "NUMERIC"
                 }
             } elseif $g(stats(col,"dt"))=nonNull {
-                set data("stats",col,"type") = "%Date"
+                set data("stats",col,"type") = "DATE"
             } elseif $g(stats(col,"ts"))=nonNull {
-                set data("stats",col,"type") = "%PosixTime" // refine
+                set data("stats",col,"type") = "TIMESTAMP" // refine
             } elseif data("stats",col,"length","max") > 10000 {
-                set data("stats",col,"type") = "%Stream.GlobalCharacter"
+                set data("stats",col,"type") = "LONGVARCHAR"
             } else {
-                set data("stats",col,"type") = "%String"
+                set data("stats",col,"type") = "VARCHAR"
             }
         }
 
@@ -311,7 +311,7 @@ Log(level, message)
     // TODO: write to %SQL_Diag
 }
 
-Query ScanFile(path As %String, qualifiers As %String = "") As %Query(ROWSPEC = "name:%String,type:%String,maxLength:%Integer,maxScale:%Integer,sqlType:%String,null:%Boolean") [ SqlName = ScanFile, SqlProc ]
+Query ScanFile(path As %String, qualifiers As %String = "") As %Query(ROWSPEC = "name:%String,type:%String,maxLength:%Integer,maxScale:%Integer,null:%Boolean") [ SqlName = ScanFile, SqlProc ]
 {
 }
 
@@ -343,19 +343,8 @@ ClassMethod ScanFileExecute(qHandle As %Binary, path As %String, qualifiers = ""
             set maxLen = (data("stats",col,"length","max") + (3 * data("stats",col,"length","stdDev"))) \ 1 + (data("stats",col,"length","stdDev")>0)
             set maxScale = $s($d(data("stats",col,"scale","max"),max):(max + (3 * data("stats",col,"scale","stdDev"))) \ 1 + (data("stats",col,"scale","stdDev")>0), 1:"")
 
-            // type > sqlType
-            // TODO: maybe do this upstream?
-            set sqlType = $case(data("stats",col,"type"),
-                            "%Integer": "INTEGER",
-                            "%Numeric": "NUMERIC",
-                            "%Date": "DATE",
-                            "%PosixTime": "TIMESTAMP",
-                            "%Stream.GlobalCharacter": "LONGVARCHAR",
-                            "%String": "VARCHAR",
-                            : "VARCHAR") // ?
-
             set qHandle = qHandle+1,
-                qHandle(qHandle) = $lb(name, data("stats",col,"type"), maxLen, maxScale, sqlType, (data("stats",col,"nullPct")>0))
+                qHandle(qHandle) = $lb(name, data("stats",col,"type"), maxLen, maxScale, (data("stats",col,"nullPct")>0))
         }
 
     } catch (ex) {
@@ -390,10 +379,12 @@ ClassMethod InferColumnList(path As %String, qualifiers As %String = "") As %Str
     try {
         set rs = ##class(%SQL.Statement).%ExecDirect(,"SELECT * FROM bdb_sql.ScanFile(?,?)", path, qualifiers)
         while rs.%Next() {
-            set type = rs.%Get("sqlType")
-            set str = str _ $s(str="":"", 1:", ") _ rs.%Get("name") _ " " _ rs.%Get("sqlType")
+            set type = rs.%Get("type")
+            set str = str _ $s(str="":"", 1:", ") _ rs.%Get("name") _ " " _ type
             if type = "VARCHAR" {
                 set str = str _ "(" _ rs.%Get("maxLength") _ ")"
+            } elseif (type = "NUMERIC") {
+                set str = str _ "(" _ rs.%Get("maxLength") _ "," _ rs.%Get("maxScale") _ ")"
             }
 
             set:'rs.%Get("null") str = str _ " NOT NULL"
