@@ -217,8 +217,8 @@ ClassMethod Peek(Output data, path As %String, qualifiers As %String = "", readL
                     set stats(col,"num") = $g(stats(col,"num"))+1
                     set:('$d(stats(col,"min"),min))||(val<min) stats(col,"min")=+val
                     set:('$d(stats(col,"max"),max))||(val>max) stats(col,"max")=+val
-                    set decimal = $find(val,".")
-                    set scale = $s(decimal:l-decimal, 1:0)
+                    set decimal = $find(val,".")-1
+                    set scale = $s(decimal<0:l-decimal, 1:0)
                     set stats(col,"scale") = $g(stats(col,"scale"))+scale,
                         stats(col,"scale",scale) = $g(stats(col,"scale",scale))+1
                 }
@@ -263,7 +263,7 @@ ClassMethod Peek(Output data, path As %String, qualifiers As %String = "", readL
                 }
                 set data("stats",col,"scale","stdDev") = $s(count:$zsqr(stddev / count), 1:0)
             }
- 
+ b:col=6
             // derive type
             set nonNull = count - $g(stats(col,"null"))
             if $g(stats(col,"num"))=nonNull {
