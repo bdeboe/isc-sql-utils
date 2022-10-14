@@ -205,17 +205,23 @@ ClassMethod Peek(Output data, path As %String, qualifiers As %String = "", readL
                 set col = $order(data(i,col),1,val)
                 quit:col=""
                 set l = $l(val), 
-                    null = ('l) || (val=""""""),
+                    null = ('l) || (val="""""") || (val="NULL"),
                     num = $ISVALIDNUM(val), 
-                    int = (num && '(val#1)), // TODO - generalize to precision/scale
                     dt = val ? 2.4N1"-"1.2N1"-"1.2N, // TODO
                     ts = val ? 2.4N1"-"1.2N1"-"1.2N1" "2N1":"2N1":"2N // TODO
                 set stats(col) = $g(stats(col))+1,
                     stats(col,"l") = $g(stats(col,"l"))+l, // total length
                     stats(col,"l",l) = $g(stats(col,"l",l))+1
                 set:null stats(col,"null") = $g(stats(col,"null"))+1
-                set:num stats(col,"num") = $g(stats(col,"num"))+1
-                set:int stats(col,"int") = $g(stats(col,"int"))+1
+                if (num) {
+                    set stats(col,"num") = $g(stats(col,"num"))+1
+                    set:('$d(stats(col,"min"),min))||(val<min) stats(col,"min")=+val
+                    set:('$d(stats(col,"max"),max))||(val>max) stats(col,"max")=+val
+                    set decimal = $find(val,".")
+                    set scale = $s(decimal:l-decimal, 1:0)
+                    set stats(col,"scale") = $g(stats(col,"scale"))+scale,
+                        stats(col,"scale",scale) = $g(stats(col,"scale",scale))+1
+                }
                 set:dt stats(col,"dt") = $g(stats(col,"dt"))+1
                 set:ts stats(col,"ts") = $g(stats(col,"ts"))+1
             }
@@ -242,13 +248,44 @@ ClassMethod Peek(Output data, path As %String, qualifiers As %String = "", readL
                 set stddev = stddev + (((data("stats",col,"length","avg")-l)**2)*c)
             }
             set data("stats",col,"length","stdDev") = $s(count:$zsqr(stddev / count), 1:0)
-
+            
+            if $g(stats(col,"num")) {
+                set data("stats",col,"min") = $g(stats(col,"min")),
+                    data("stats",col,"max") = $g(stats(col,"max")),
+                    data("stats",col,"scale","avg") = $g(stats(col,"scale"))/count,
+                    data("stats",col,"scale","min") = $o(stats(col,"scale","")),
+                    data("stats",col,"scale","max") = $o(stats(col,"scale",""),-1)
+                set stddev = 0, s = ""
+                for {
+                    set s = $order(stats(col,"scale",s),1,c)
+                    quit:s=""
+                    set stddev = stddev + (((data("stats",col,"scale","avg")-s)**2)*c)
+                }
+                set data("stats",col,"scale","stdDev") = $s(count:$zsqr(stddev / count), 1:0)
+            }
+ b:col=4
             // derive type
             set nonNull = count - $g(stats(col,"null"))
-            if $g(stats(col,"int"))=nonNull {
-                set data("stats",col,"type") = "%Integer"
-            } elseif $g(stats(col,"num"))=nonNull {
-                set data("stats",col,"type") = "%Numeric"
+            if $g(stats(col,"num"))=nonNull {
+                if ('$g(data("stats",col,"scale","max"))) {
+                    // somewhat arbitrary criteria, up for refinement
+                    if $f($$$UPPER($g(data("stats",col))),"ID") {
+                        // if the column name has "ID" in it, consider it a BIGINT
+                        set data("stats",col,"type") = "%BigInt"
+                    } elseif (nonNull>=50) && (data("stats",col,"max")=1) && (data("stats",col,"min")=0) {
+                        // if we only found 1s and 0s, assume boolean
+                        set data("stats",col,"type") = "%Boolean"
+                    } elseif (nonNull>=100) && (data("stats",col,"max")<100) && (data("stats",col,"min")>-100) {
+                        // if it's only 2 digits and we were looking at >100 values, 
+                        // a TINYINT will likely do
+                        set data("stats",col,"type") = "%TinyInt"
+                    } else {
+                        set data("stats",col,"type") = "%Integer"
+                    }
+                    
+                } else {
+                    set data("stats",col,"type") = "%Numeric"
+                }
             } elseif $g(stats(col,"dt"))=nonNull {
                 set data("stats",col,"type") = "%Date"
             } elseif $g(stats(col,"ts"))=nonNull {
@@ -274,7 +311,7 @@ Log(level, message)
     // TODO: write to %SQL_Diag
 }
 
-Query ScanFile(path As %String, qualifiers As %String = "") As %Query(ROWSPEC = "name:%String,type:%String,maxLength:%Integer,sqlType:%String,null:%Boolean") [ SqlName = ScanFile, SqlProc ]
+Query ScanFile(path As %String, qualifiers As %String = "") As %Query(ROWSPEC = "name:%String,type:%String,maxLength:%Integer,maxScale:%Integer,sqlType:%String,null:%Boolean") [ SqlName = ScanFile, SqlProc ]
 {
 }
 
@@ -302,8 +339,9 @@ ClassMethod ScanFileExecute(qHandle As %Binary, path As %String, qualifiers = ""
                 set name = "Column"_col
             }
 
-            // suggest safe max length
-            set maxLen = (data("stats",col,"length","max") + (3 * data("stats",col,"length","stdDev"))) \ 1 + 1
+            // suggest safe max length and scale
+            set maxLen = (data("stats",col,"length","max") + (3 * data("stats",col,"length","stdDev"))) \ 1 + (data("stats",col,"length","stdDev")>0)
+            set maxScale = $s($d(data("stats",col,"scale","max"),max):(max + (3 * data("stats",col,"scale","stdDev"))) \ 1 + (data("stats",col,"scale","stdDev")>0), 1:"")
 
             // type > sqlType
             // TODO: maybe do this upstream?
@@ -317,7 +355,7 @@ ClassMethod ScanFileExecute(qHandle As %Binary, path As %String, qualifiers = ""
                             : "VARCHAR") // ?
 
             set qHandle = qHandle+1,
-                qHandle(qHandle) = $lb(name, data("stats",col,"type"), maxLen, sqlType, (data("stats",col,"nullPct")>0))
+                qHandle(qHandle) = $lb(name, data("stats",col,"type"), maxLen, maxScale, sqlType, (data("stats",col,"nullPct")>0))
         }
 
     } catch (ex) {
