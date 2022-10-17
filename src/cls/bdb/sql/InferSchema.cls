@@ -263,7 +263,7 @@ ClassMethod Peek(Output data, path As %String, qualifiers As %String = "", readL
                 }
                 set data("stats",col,"scale","stdDev") = $s(count:$zsqr(stddev / count), 1:0)
             }
- b:col=6
+ 
             // derive type
             set nonNull = count - $g(stats(col,"null"))
             if $g(stats(col,"num"))=nonNull {
