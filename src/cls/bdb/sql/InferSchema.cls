@@ -5,11 +5,11 @@
 Class bdb.sql.InferSchema
 {
 
-ClassMethod Peek(Output data, path As %String, qualifiers As %String = "", readLines As %Integer = 100) As %Status [ Internal ]
+ClassMethod ScanFile(Output info, path As %String, qualifiers As %String = "", Output data) As %Status [ Internal ]
 {
     #define MaxLineLength 999999
     kill data
-    set sc = $$$OK
+    set sc = $$$OK, info = {}
     try {
         set qualifiers = $s(qualifiers="":{}, '$isobject(qualifiers):##class(%DynamicObject).%FromJSON(qualifiers), 1:qualifiers)
         
@@ -19,6 +19,7 @@ ClassMethod Peek(Output data, path As %String, qualifiers As %String = "", readL
             set qf($$$LOWER(key)) = value
         }
         set verbose = +$g(qf("verbose"))
+        set readLines = $g(qf("readLines"),200)
 
         set file = ##class(%Stream.FileCharacter).%New()
         set sc = file.LinkToFile(path)
@@ -145,6 +146,8 @@ ClassMethod Peek(Output data, path As %String, qualifiers As %String = "", readL
             do Log("INFO","No header in this file")
         }
 
+        set info.columnSeparator = qf("columnseparator")
+
         // parse lines
         for i = 1:1:lines {
             set line = $replace(lines(i),"\"_quote,quote_quote),
@@ -218,7 +221,7 @@ ClassMethod Peek(Output data, path As %String, qualifiers As %String = "", readL
                     set:('$d(stats(col,"min"),min))||(val<min) stats(col,"min")=+val
                     set:('$d(stats(col,"max"),max))||(val>max) stats(col,"max")=+val
                     set decimal = $find(val,".")-1
-                    set scale = $s(decimal<0:l-decimal, 1:0)
+                    set scale = $s(decimal>0:l-decimal, 1:0)
                     set stats(col,"scale") = $g(stats(col,"scale"))+scale,
                         stats(col,"scale",scale) = $g(stats(col,"scale",scale))+1
                 }
@@ -227,74 +230,85 @@ ClassMethod Peek(Output data, path As %String, qualifiers As %String = "", readL
             }
         }
 
+        set info.columns = []
         set col = ""
         for {
             set col = $order(stats(col),1,count)
             quit:col=""
+            set colInfo = {}
             if header'="" {
-                set data("stats",col) = $piece(header,qf("columnseparator"),col)
+                set colInfo.name = $piece(header,qf("columnseparator"),col)
             }
-            set data("stats",col,"count") = count,
-                data("stats",col,"nullPct") = $g(stats(col,"null"))/count,
-                data("stats",col,"length","avg") = $g(stats(col,"l"))/count,
-                data("stats",col,"length","min") = $o(stats(col,"l","")),
-                data("stats",col,"length","max") = $o(stats(col,"l",""),-1)
+            set colInfo.count = count,
+                colInfo.nullPct = $g(stats(col,"null"))/count,
+                colInfo.length = {"avg": ($g(stats(col,"l"))/count),
+                                  "min": (+$o(stats(col,"l",""))),
+                                  "max": (+$o(stats(col,"l",""),-1))}
 
             set stddev = 0
             set l = ""
             for {
                 set l = $order(stats(col,"l",l),1,c)
                 quit:l=""
-                set stddev = stddev + (((data("stats",col,"length","avg")-l)**2)*c)
+                set stddev = stddev + (((colInfo.length.avg-l)**2)*c)
             }
-            set data("stats",col,"length","stdDev") = $s(count:$zsqr(stddev / count), 1:0)
+            set colInfo.length.stdDev = $s(count:$zsqr(stddev / count), 1:0)
             
             if $g(stats(col,"num")) {
-                set data("stats",col,"min") = $g(stats(col,"min")),
-                    data("stats",col,"max") = $g(stats(col,"max")),
-                    data("stats",col,"scale","avg") = $g(stats(col,"scale"))/count,
-                    data("stats",col,"scale","min") = $o(stats(col,"scale","")),
-                    data("stats",col,"scale","max") = $o(stats(col,"scale",""),-1)
+                set colInfo.min = $g(stats(col,"min")),
+                    colInfo.max = $g(stats(col,"max")),
+                    colInfo.scale = {"avg": ($g(stats(col,"scale"))/count),
+                                     "min": (+$o(stats(col,"scale",""))),
+                                     "max": (+$o(stats(col,"scale",""),-1)) }
                 set stddev = 0, s = ""
                 for {
                     set s = $order(stats(col,"scale",s),1,c)
                     quit:s=""
-                    set stddev = stddev + (((data("stats",col,"scale","avg")-s)**2)*c)
+                    set stddev = stddev + (((colInfo.scale.avg-s)**2)*c)
                 }
-                set data("stats",col,"scale","stdDev") = $s(count:$zsqr(stddev / count), 1:0)
+                set colInfo.scale.stdDev = $s(count:$zsqr(stddev / count), 1:0)
             }
  
             // derive type
             set nonNull = count - $g(stats(col,"null"))
             if $g(stats(col,"num"))=nonNull {
-                if ('$g(data("stats",col,"scale","max"))) {
+                if ('colInfo.scale.max) {
+                    set colInfo.type = "integer"
+
                     // somewhat arbitrary criteria, up for refinement
-                    if $f($$$UPPER($g(data("stats",col))),"ID") {
+                    if $f($$$UPPER(colInfo.name),"ID") {
                         // if the column name has "ID" in it, consider it a BIGINT
-                        set data("stats",col,"type") = "BIGINT"
-                    } elseif (nonNull>=50) && (data("stats",col,"max")=1) && (data("stats",col,"min")=0) {
+                        set colInfo.sqlType = "BIGINT"
+                    } elseif (nonNull>=50) && (colInfo.max=1) && (colInfo.min=0) {
                         // if we only found 1s and 0s, assume boolean
-                        set data("stats",col,"type") = "BOOLEAN"
-                    } elseif (nonNull>=100) && (data("stats",col,"max")<100) && (data("stats",col,"min")>-100) {
+                        set colInfo.sqlType = "BOOLEAN"
+                    } elseif (nonNull>=100) && (colInfo.max<100) && (colInfo.min>-100) {
                         // if it's only 2 digits and we were looking at >100 values, 
                         // a TINYINT will likely do
-                        set data("stats",col,"type") = "TINYINT"
+                        set colInfo.sqlType = "TINYINT"
                     } else {
-                        set data("stats",col,"type") = "INTEGER"
+                        set colInfo.sqlType = "INTEGER("_$$SafeMargin(colInfo.length)_")"
                     }
                     
                 } else {
-                    set data("stats",col,"type") = "NUMERIC"
+                    set colInfo.type = "number",
+                        colInfo.sqlType = "NUMERIC("_$$SafeMargin(colInfo.length)_","_$$SafeMargin(colInfo.scale)_")"
                 }
             } elseif $g(stats(col,"dt"))=nonNull {
-                set data("stats",col,"type") = "DATE"
+                set colInfo.type = "date", 
+                    colInfo.sqlType = "DATE"
             } elseif $g(stats(col,"ts"))=nonNull {
-                set data("stats",col,"type") = "TIMESTAMP" // refine
-            } elseif data("stats",col,"length","max") > 10000 {
-                set data("stats",col,"type") = "LONGVARCHAR"
+                set colInfo.type = "timestamp", 
+                    colInfo.sqlType = "TIMESTAMP" // refine
+            } elseif colInfo.length.max > 10000 {
+                set colInfo.type = "stream", 
+                    colInfo.sqlType = "LONGVARCHAR"
             } else {
-                set data("stats",col,"type") = "VARCHAR"
+                set colInfo.type = "string",
+                    colInfo.sqlType = "VARCHAR("_$$SafeMargin(colInfo.length)_")"
             }
+
+            do info.columns.%Push(colInfo)
         }
 
     } catch (ex) {
@@ -303,72 +317,26 @@ ClassMethod Peek(Output data, path As %String, qualifiers As %String = "", readL
         set logged=1
     }
     do:$$$ISERR(sc)&&'$g(logged) Log("ERROR","Error inferring schema from file: "_$system.Status.GetOneErrorText(sc))
-    
+
     quit sc
 
 Log(level, message)
     write:verbose !,$zdt($h)," - ",level,": ",message
     // TODO: write to %SQL_Diag
-}
-
-Query ScanFile(path As %String, qualifiers As %String = "") As %Query(ROWSPEC = "name:%String,type:%String,maxLength:%Integer,maxScale:%Integer,null:%Boolean") [ SqlName = ScanFile, SqlProc ]
-{
-}
-
-ClassMethod ScanFileExecute(qHandle As %Binary, path As %String, qualifiers = "") As %Status [ Internal, ServerOnly = 1 ]
-{
-    kill qHandle
-    set sc = $$$OK
-    try {
-
-        set sc = ..Peek(.data, path, qualifiers)
-        quit:$$$ISERR(sc)
-
-        set col = "", qHandle = 0
-        for {
-            set name = "", col = $order(data("stats",col),1,name)
-            quit:col=""
-
-            // skip last column if all nulls
-            if ($g(name)="") && (1=$g(data("stats",col,"nullPct"))) && ($o(data("stats",col))="") {
-                quit
-            }
-
-            // find a name if we didn't get one in the header
-            if $g(name)="" {
-                set name = "Column"_col
-            }
-
-            // suggest safe max length and scale
-            set maxLen = (data("stats",col,"length","max") + (3 * data("stats",col,"length","stdDev"))) \ 1 + (data("stats",col,"length","stdDev")>0)
-            set maxScale = $s($d(data("stats",col,"scale","max"),max):(max + (3 * data("stats",col,"scale","stdDev"))) \ 1 + (data("stats",col,"scale","stdDev")>0), 1:"")
-
-            set qHandle = qHandle+1,
-                qHandle(qHandle) = $lb(name, data("stats",col,"type"), maxLen, maxScale, (data("stats",col,"nullPct")>0))
-        }
-
-    } catch (ex) {
-        set sc = ex.AsStatus()
+    if $isobject($g(info)) && (level'="INFO") && (level'="DEBUG") {
+        set:(info.errors="") info.errors = []
+        do info.errors.%Push({ "level": (level), "message": (message) })
     }
-    set qHandle = 0
-    quit sc
+    quit
+SafeMargin(el)
+    quit el.max + $s(el.stdDev>00.34:(3*el.stdDev)\1, 1:1)
 }
 
-ClassMethod ScanFileFetch(ByRef qHandle As %Binary, Output Row As %List, Output AtEnd As %Boolean) As %Status [ Internal, ServerOnly = 1 ]
+/// SQL entry point for <method>ScanFile</method>
+ClassMethod ScanFileSQL(path As %String, qualifiers As %String = "") As %String [ SqlName = ScanFile, SqlProc ]
 {
-	set qHandle = $order(qHandle(qHandle),1,data)
-	if qHandle="" {
-		set AtEnd = 1, Row = ""
-	} else {
-		set AtEnd = 0, Row = data
-	}
-	quit $$$OK
-}
-
-ClassMethod ScanFileClose(ByRef qHandle As %Binary) As %Status [ Internal, ServerOnly = 1 ]
-{
-	kill qHandle
-	quit $$$OK
+    set sc = ..ScanFile(path, .info, qualifiers)
+    quit $s($$$ISERR(sc):{ "error": ($SYSTEM.Status.GetErrorText(sc)) }, 1:info.%ToJSON())
 }
 
 /// Returns the inferred column list for the file at <var>path</var>, in a format ready for
@@ -377,17 +345,14 @@ ClassMethod InferColumnList(path As %String, qualifiers As %String = "") As %Str
 {
     set str = ""
     try {
-        set rs = ##class(%SQL.Statement).%ExecDirect(,"SELECT * FROM bdb_sql.ScanFile(?,?)", path, qualifiers)
-        while rs.%Next() {
-            set type = rs.%Get("type")
-            set str = str _ $s(str="":"", 1:", ") _ rs.%Get("name") _ " " _ type
-            if type = "VARCHAR" {
-                set str = str _ "(" _ rs.%Get("maxLength") _ ")"
-            } elseif (type = "NUMERIC") {
-                set str = str _ "(" _ rs.%Get("maxLength") _ "," _ rs.%Get("maxScale") _ ")"
-            }
-
-            set:'rs.%Get("null") str = str _ " NOT NULL"
+        set sc = ..ScanFile(.info, path, qualifiers)
+        quit:$$$ISERR(sc)
+        quit:'$isobject(info.columns)
+        set iterator = info.columns.%GetIterator(), i=1
+        while iterator.%GetNext(,.column) {
+            set str = str _ $s(str="":"", 1:", ") _ $s(column.name="":"Column"_i, 1:column.name) _ " " _ column.sqlType
+            set:'column.nullPct str = str _ " NOT NULL"
+            set i = i+1
         }
 
     } catch (ex) {
