@@ -1,10 +1,27 @@
 /// Basic class for inspecting a (CSV) file and inferring the probable datatypes for
-/// each column. Main entry points are <query>ScanFile</query>, which projects a 
-/// result set with one row for each column and <method>InferColumnList</method>, which 
-/// structures that information in a DDL-ready format. 
+/// each column. Main entry points are <method>ScanFile</method>, which returns a 
+/// <class>%DynamicObject</class> with anything we could glean from the file and
+/// <method>InferColumnList</method>, which structures that information in a DDL-ready format. 
 Class bdb.sql.InferSchema
 {
 
+/// The <method>qualifiers</method> passed into this method are assumed to follow the same
+/// somewhat verbose format as <tt>LOAD DATA</tt>, meaning the ones relevant to file parsing
+/// are nested in <tt>from.file.*</tt> structure. The ones only relevant to this inferencing
+/// routine are simply at the root. For example:
+/// <pre>
+///  { 
+///     "from": 
+///         { 
+///             "file": 
+///                 {
+///                     "columnSeparator": ";"
+///                 }
+///         },
+///     "verbose": 1,
+///     "readLines": 1000
+///  }
+///  </pre>
 ClassMethod ScanFile(Output info, path As %String, qualifiers As %String = "", Output data) As %Status [ Internal ]
 {
     #define MaxLineLength 999999
@@ -13,13 +30,17 @@ ClassMethod ScanFile(Output info, path As %String, qualifiers As %String = "", O
     try {
         set qualifiers = $s(qualifiers="":{}, '$isobject(qualifiers):##class(%DynamicObject).%FromJSON(qualifiers), 1:qualifiers)
         
+        // push seeded qualifiers to output for use in LOAD DATA
+        set info.qualifiers = qualifiers
+        set:'$isobject(info.qualifiers.from) info.qualifiers.from = { "file": {} }
+        set:'$isobject(info.qualifiers.from.file) info.qualifiers.from.file = {}
+        
         // stash lowercased qualifier keys
-        set iterator = qualifiers.%GetIterator()
-        while iterator.%GetNext(.key, .value) {
-            set qf($$$LOWER(key)) = value
-        }
+        do ..FlattenQualifiers(.qf, qualifiers)
         set verbose = +$g(qf("verbose"))
-        set readLines = $g(qf("readLines"),200)
+        set readLines = $g(qf("readlines"),200)
+        #define qfHeader qf("from.file.header")
+        #define qfSeparator qf("from.file.columnseparator")
 
         set file = ##class(%Stream.FileCharacter).%New()
         set sc = file.LinkToFile(path)
@@ -27,7 +48,7 @@ ClassMethod ScanFile(Output info, path As %String, qualifiers As %String = "", O
         do Log("INFO","Reading file '"_path_"'")
 
         // unless there's definitely no header, skip the first nonempty line
-        if '$g(qf("header")) {
+        if '$g($$$qfHeader) {
             do {
                 set line = $zstrip(file.ReadLine($$$MaxLineLength),"<>WC")
             } while (line="") && 'file.AtEnd
@@ -61,8 +82,8 @@ ClassMethod ScanFile(Output info, path As %String, qualifiers As %String = "", O
         set quote = """"
             
         // identify the field separator
-        if $g(qf("columnseparator"))'="" {
-            do Log("INFO", "Parsing lines using supplied column separator '"_qf("columnseparator")_"'")
+        if $g($$$qfSeparator)'="" {
+            do Log("INFO", "Parsing lines using supplied column separator '"_$$$qfSeparator_"'")
         } else {
             do Log("INFO", "No column separator supplied, checking candidates")
 
@@ -110,51 +131,53 @@ ClassMethod ScanFile(Output info, path As %String, qualifiers As %String = "", O
                 }
                 set (stddev,sep(sep,"stddev")) = $s(lines:$zsqr(stddev / lines),1:0)
                 if (mean > 1) && ((mean-stddev) > bestScore) {
-                    set qf("columnseparator") = sep,
+                    set $$$qfSeparator = sep,
                         bestScore = (mean-stddev)
                 }
             }
             if (bestScore = 0) {
                 do Log("WARNING", "Could not find a suitable column separator, possibly because there is only one column.")
-                set qf("columnseparator") = ","
+                set $$$qfSeparator = ","
             }
  
-            do Log("INFO", "Assuming the column separator is '"_qf("columnseparator")_"'")
+            do Log("INFO", "Assuming the column separator is '"_$$$qfSeparator_"'")
+            set info.qualifiers.from.file.columnSeparator = $$$qfSeparator
         }
  
         if $g(header)'="" {
             
-            if $g(qf("header"))="" {
+            if $g($$$qfHeader)="" {
                 // if the user didn't tell us there was a header, check if the first
                 // line has numeric values, which likely means it's not a header
                 set notSoString = 0, 
-                    cols = $l(header,qf("columnseparator"))
+                    cols = $l(header,$$$qfSeparator)
                 for i = 1:1:cols {
-                    set f = $p(header,qf("columnseparator"),i),
+                    set f = $p(header,$$$qfSeparator,i),
                         notSoString = notSoString + $isvalidnum(f) // TODO: dates?
                 }
                 if (notSoString > 0) { // too bad
                     set header = ""
                     do Log("INFO","Unable to identify a header line, assuming there is none")
                 } else {
-                    do Log("INFO","Assuming the following header: "_$lts($lfs(header,qf("columnseparator")),", "))
+                    do Log("INFO","Assuming the following header: "_$lts($lfs(header,$$$qfSeparator),", "))
+                    set info.qualifiers.from.file.header = 1
                 }
             } else {
-                do Log("INFO","Using the following header: "_$lts($lfs(header,qf("columnseparator")),", "))
+                do Log("INFO","Using the following header: "_$lts($lfs(header,$$$qfSeparator),", "))
             }
         } else {
             do Log("INFO","No header in this file")
         }
 
-        set info.columnSeparator = qf("columnseparator")
+        set info.columnSeparator = $$$qfSeparator
 
         // parse lines
         for i = 1:1:lines {
             set line = $replace(lines(i),"\"_quote,quote_quote),
-                pieces = $l(line, qf("columnseparator")),
+                pieces = $l(line, $$$qfSeparator),
                 (p, new) = 1, col = 0
             while p <= pieces {
-                set piece = $p(line,qf("columnseparator"),p)
+                set piece = $p(line,$$$qfSeparator,p)
                 
                 // start of a new column value
                 if new {
@@ -184,17 +207,17 @@ ClassMethod ScanFile(Output info, path As %String, qualifiers As %String = "", O
 
                         if '($l(piece,quote)#2) {
                             // ends with this piece
-                            set new = 1, p = p+1, data(i,col) = data(i,col)_qf("columnseparator")_piece
+                            set new = 1, p = p+1, data(i,col) = data(i,col)_$$$qfSeparator_piece
                             continue
                         } else {
                             // continuation
-                            set new = 0, p = p+1, data(i,col) = data(i,col)_qf("columnseparator")_piece
+                            set new = 0, p = p+1, data(i,col) = data(i,col)_$$$qfSeparator_piece
                             continue
                         }
 
                     } else {
                         // continuation
-                        set new = 0, p = p+1, data(i,col) = data(i,col)_qf("columnseparator")_piece
+                        set new = 0, p = p+1, data(i,col) = data(i,col)_$$$qfSeparator_piece
                         continue
                     }
                 }
@@ -237,7 +260,7 @@ ClassMethod ScanFile(Output info, path As %String, qualifiers As %String = "", O
             quit:col=""
             set colInfo = {}
             if header'="" {
-                set colInfo.name = $piece(header,qf("columnseparator"),col)
+                set colInfo.name = $piece(header,$$$qfSeparator,col)
             }
             set colInfo.count = count,
                 colInfo.nullPct = $g(stats(col,"null"))/count,
@@ -332,6 +355,19 @@ SafeMargin(el)
     quit el.max + $s(el.stdDev>00.34:(3*el.stdDev)\1, 1:1)
 }
 
+ClassMethod FlattenQualifiers(ByRef qf, obj As %DynamicObject, prefix As %String = "") [ Internal, Private ]
+{
+    set iterator = obj.%GetIterator()
+    while iterator.%GetNext(.key, .value) {
+        set sub = $s(prefix="":$$$LOWER(key), 1:prefix_"."_$$$LOWER(key))
+        if $isobject(value) {
+            do ..FlattenQualifiers(.qf, value, sub)
+        } else {
+            set qf(sub) = value
+        }
+    }
+}
+
 /// SQL entry point for <method>ScanFile</method>
 ClassMethod ScanFileSQL(path As %String, qualifiers As %String = "") As %String [ SqlName = ScanFile, SqlProc ]
 {
@@ -356,7 +392,7 @@ ClassMethod InferColumnList(path As %String, qualifiers As %String = "") As %Str
         }
 
     } catch (ex) {
-        set sc = ex.AsStatus() // TODO ?
+        set sc = ex.AsStatus() 
     }
     quit str
 }
