@@ -48,7 +48,7 @@ ClassMethod ScanFile(Output info, path As %String, qualifiers As %String = "", O
         do Log("INFO","Reading file '"_path_"'")
 
         // unless there's definitely no header, skip the first nonempty line
-        if '$g($$$qfHeader) {
+        if $g($$$qfHeader,-1)'=0 {
             do {
                 set line = $zstrip(file.ReadLine($$$MaxLineLength),"<>WC")
             } while (line="") && 'file.AtEnd
@@ -141,7 +141,7 @@ ClassMethod ScanFile(Output info, path As %String, qualifiers As %String = "", O
             }
  
             do Log("INFO", "Assuming the column separator is '"_$$$qfSeparator_"'")
-            set info.qualifiers.from.file.columnSeparator = $$$qfSeparator
+            set info.qualifiers.from.file.columnseparator = $$$qfSeparator
         }
  
         if $g(header)'="" {
@@ -168,8 +168,6 @@ ClassMethod ScanFile(Output info, path As %String, qualifiers As %String = "", O
         } else {
             do Log("INFO","No header in this file")
         }
-
-        set info.columnSeparator = $$$qfSeparator
 
         // parse lines
         for i = 1:1:lines {
