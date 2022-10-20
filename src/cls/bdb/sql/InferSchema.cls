@@ -291,6 +291,10 @@ ClassMethod ScanFile(Output info, path As %String, qualifiers As %String = "", O
                 }
                 set colInfo.scale.stdDev = $s(count:$zsqr(stddev / count), 1:0)
             }
+
+            // if this is the last column, with just NULLs and no name, it's probably
+            // just a trailing separator, so skip
+            if ($order(stats(col))="") && (colInfo.name="") && (colInfo.nullPct=1) { quit }
  
             // derive type
             set nonNull = count - $g(stats(col,"null"))
@@ -310,7 +314,7 @@ ClassMethod ScanFile(Output info, path As %String, qualifiers As %String = "", O
                         // a TINYINT will likely do
                         set colInfo.sqlType = "TINYINT"
                     } else {
-                        set colInfo.sqlType = "INTEGER("_$$SafeMargin(colInfo.length)_")"
+                        set colInfo.sqlType = "INT("_$$SafeMargin(colInfo.length)_")"
                     }
                     
                 } else {
@@ -376,18 +380,22 @@ ClassMethod ScanFileSQL(path As %String, qualifiers As %String = "") As %String 
 }
 
 /// Returns the inferred column list for the file at <var>path</var>, in a format ready for
-/// wrapping in a <tt>CREATE TABLE t ( ... )</tt> statement.
+/// wrapping in a <tt>CREATE TABLE t ( ... )</tt> or <tt>LOAD DATA FROM FILE .. COLUMNS (..)</tt>
+/// statement.
 ClassMethod InferColumnList(path As %String, qualifiers As %String = "") As %String [ SqlName = InferColumnList, SqlProc ]
 {
     set str = ""
     try {
+        set qualifiers = $s(qualifiers="":{}, '$isobject(qualifiers):##class(%DynamicObject).%FromJSON(qualifiers), 1:qualifiers)
+        do ..FlattenQualifiers(.qf, qualifiers)
+
         set sc = ..ScanFile(.info, path, qualifiers)
         quit:$$$ISERR(sc)
         quit:'$isobject(info.columns)
         set iterator = info.columns.%GetIterator(), i=1
         while iterator.%GetNext(,.column) {
             set str = str _ $s(str="":"", 1:", ") _ $s(column.name="":"Column"_i, 1:column.name) _ " " _ column.sqlType
-            set:'column.nullPct str = str _ " NOT NULL"
+            set:$g(qf("strict"))&&'column.nullPct str = str _ " NOT NULL"
             set i = i+1
         }
 
