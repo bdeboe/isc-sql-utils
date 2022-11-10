@@ -282,6 +282,72 @@ ClassMethod MakePlansReadable(statementTable As %String = "SISnapshot.STATEMENTS
     quit sc
 }
 
+/*
+ClassMethod MakePlansReadable(statementTable As %String = "SISnapshot.STATEMENTS", Output errors) As %Status
+{
+    kill errors
+    set sc = $$$OK
+    try {
+        return:'$SYSTEM.SQL.Schema.TableExists(statementTable, .metadata) $$$ERROR($$$TableDoesNotExist, statementTable)
+
+        // we need to fetch the IDs upfront as our plan-reading calls interfere
+        // with regular SQL processing
+        set rs = ##class(%SQL.Statement).%ExecDirect(,"SELECT %ID FROM "_statementTable)
+        while rs.%Next() {
+            set ids(rs.%GetData(1))=""
+        }
+        kill stmt
+
+        set %defschema=$lb("SQLUser"),
+            info=1
+
+        set id = "", classname = $lg(metadata,3)
+        for {
+            set id = $order(ids(id))
+            quit:id=""
+
+            try {
+                set stmt = $classmethod(classname,"%OpenId",id)
+
+                kill ^||%sql.smd, @("mt"), @("asl"), @("mtc"), metadata
+                set %msqlvar=0, %0SQLCompileLevel=1
+
+                // build statement and then SMD
+                set sql=1, sql(1)=stmt.Statement
+                do comp^%qaqqt("query",.sql,"info","",0,"","%qsc(%qscacn",,,$g(packages),,,,,,,,.nRTP)
+
+                // recover saved plan
+                kill zippedPlan
+                for zippedPlan = 1:1:$ll(stmt.Plan) {
+                    set zippedPlan(zippedPlan) = $lg(stmt.Plan,zippedPlan)
+                }
+                do fplanar^%qaqplansave(.zippedPlan,0,0)
+
+                // need to bypass reserved variable names
+                merge bmt = @("mt"), basl = @("asl")
+                set bmt("frozen") = stmt.Frozen
+                
+                kill %plan
+                set plan=""
+                do nliz^%qaqplan(.sql,.basl,.bmt,"??COST??",0,.sql,1)
+                for i = 1:1:%plan {
+                    set plan = plan_$c(13,10)_%plan(i)
+                }
+                kill %plan
+
+                set stmt.ReadablePlan = plan
+                set sc = stmt.%Save()
+            } catch (ex) {
+                set sc = ex.AsStatus()
+            }
+            set:$$$ISERR(sc) errors = $g(errors)+1, errors(id) = sc
+        }
+    } catch (ex) {
+        set sc = ex.AsStatus()
+    }
+    quit sc
+}
+*/
 /// Dumb statement parser that strips options, hints and other mechanical stuff that might have
 /// been added by layers of SQL processing. The end result is a "clean" version of your SQL 
 /// statement that may make it easier to, for example, relate JDBC and DynamicSQL versions of the
