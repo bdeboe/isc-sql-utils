@@ -8,9 +8,10 @@
 Class bdb.sql.StorageUtils
 {
 
-/// Exports the table definition and contents for <var>tableName</var> to <var>file</var>.
+/// <p>Exports the table definition and contents for <var>tableName</var> to <var>file</var>.
 /// If the supplied export <var>file</var> name ends with .gzip or .gz, the export file
-/// will be compressed automatically.
+/// will be compressed automatically.</p>
+/// <p>This method will try to take a lock on any table extents while it exports them.</p>
 ClassMethod ExportTable(tableName As %String, file As %String, qspec As %String, Output excludesIndices As %Boolean) As %Status [ SqlName = ExportTable, SqlProc ]
 {
 	set sc = $$$OK, excludesIndices = 0
@@ -99,6 +100,23 @@ ClassMethod ExportTable(tableName As %String, file As %String, qspec As %String,
 			quit:$$$ISERR(sc) // TODO - might accommodate the case where we have no write privs and just make this a warning
 			set export(ibuName_".CLS")=""
 		}
+
+		// lock extents while exporting
+		write:verbose !,"Locking tables during export"
+		set exp = ""
+		for {
+			set exp = $order(export(exp))
+			quit:exp=""
+			continue:$p(exp,".",*)'="CLS"
+			
+			set cls = $p(exp,".",1,*-1)
+			continue:$d(ibuName)&&(cls=ibuName)
+			continue:'$classmethod(cls, "%IsA", "%Library.Persistent")
+			set sc = $classmethod(cls, "%LockExtent")
+			quit:$$$ISERR(sc)
+			set locked(cls) = 1
+		}
+		quit:$$$ISERR(sc)
 		
 		// now export
 		set sc = $SYSTEM.OBJ.Export(.export, file, .qspec)
@@ -117,9 +135,21 @@ ClassMethod ExportTable(tableName As %String, file As %String, qspec As %String,
 	} catch (ex) {
 		set sc = ex.AsStatus()
 	}
+
+	// remove extent locks if we took any, but ignore errors
+	set cls = ""
+	for {
+		set cls = $order(locked(cls))
+		quit:cls=""
+		try {
+			do $classmethod(cls, "%UnlockExtent")
+		} catch {}
+	}
+
 	quit sc
 }
 
+/// This method imports a table and its data from a file produced by <method>ExportTable</method>
 ClassMethod ImportTable(file As %String, qspec As %String) As %Status [ SqlName = ImportTable, SqlProc ]
 {
 	set sc = $$$OK
