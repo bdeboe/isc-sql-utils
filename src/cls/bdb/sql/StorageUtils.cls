@@ -1,9 +1,10 @@
 /// Various utilities to warp or exploit IRIS' flexible storage definition framework.
 /// Methods to try:
 /// <ol>
+/// <li><method>TableSize</method></li>
+/// <li><method>ExportTable</method></li>
 /// <li><method>ConvertToUseExtents</method></li>
 /// <li><method>CreateMappedTable</method></li>
-/// <li><method>TableSize</method></li>
 /// </ol>
 Class bdb.sql.StorageUtils
 {
@@ -764,8 +765,6 @@ ClassMethod TableSize(tableName As %String = "", Output info, fast As %Boolean =
 			do Warn("Table storage type '"_storage.Type_"' is not fully supported. Result may not be accurate.")
 		}
 
-        set rsize = ##class(%ResultSet).%New("%SYS.GlobalQuery:Size")
-
         set (totalAllocated, totalUsed) = 0
 		set rs = ##class(%SQL.Statement).%ExecDirect(,"CALL %ExtentMgr.GlobalsUsed(?)", className)
         kill globs
@@ -777,13 +776,13 @@ ClassMethod TableSize(tableName As %String = "", Output info, fast As %Boolean =
                 continue
             }
             set globs(glo)=""
-            do rsize.%Execute($p(dir,"^",2), "", $e(glo,2,*),,,fast)
-            if rsize.%Next() {
-                set sizeAllocated = rsize.%GetData(2), sizeUsed = rsize.%GetData(3)
-            } else {
-                do Warn(" - No size info found for "_glo)
-				set sizeAllocated = "", sizeUsed = ""
-            }
+			if $d(@glo) {
+				set sc = ##class(%GlobalEdit).GetGlobalSize($p(dir,"^",2), $e(glo,2,*), .sizeAllocated, .sizeUsed, fast)
+				if $$$ISERR(sc) {
+					do Warn(" - No size info found for "_glo_" - "_$system.Status.GetOneErrorText(sc), "ERROR")
+					set sizeAllocated = "", sizeUsed = ""
+				}
+			} else { set (sizeAllocated, sizeUsed) = 0 }
             
 			set totalAllocated = totalAllocated + sizeAllocated,
                 totalUsed = totalUsed + sizeUsed
@@ -804,13 +803,13 @@ ClassMethod TableSize(tableName As %String = "", Output info, fast As %Boolean =
                 write:verbose !,"- Global "_glo_", covering "_rs.%Get("GlobalReference")_" already counted"
             } else {
 				set globs(glo)=""
-				do rsize.%Execute($p(dir,"^",2), "", $e(glo,2,*),,,fast)
-				if rsize.%Next() {
-					set sizeAllocated = rsize.%GetData(2), sizeUsed = rsize.%GetData(3)
-				} else {
-					do Warn(" - No size info found for "_glo)
-					set sizeAllocated = "", sizeUsed = ""
-				}
+				if $d(@glo) {
+					set sc = ##class(%GlobalEdit).GetGlobalSize($p(dir,"^",2), $e(glo,2,*), .sizeAllocated, .sizeUsed, fast)
+					if $$$ISERR(sc) {
+						do Warn(" - No size info found for "_glo_" - "_$system.Status.GetOneErrorText(sc), "ERROR")
+						set sizeAllocated = "", sizeUsed = ""
+					}
+				} else { set (sizeAllocated, sizeUsed) = 0 }
 				
 				set totalAllocated = totalAllocated + sizeAllocated,
 					totalUsed = totalUsed + sizeUsed
