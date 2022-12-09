@@ -44,13 +44,29 @@ SELECT * FROM bdb_sql.TableSize('MySchema.MyTable')
 
 ### Exporting a table and its contents
 
-This one will likely find its way into the product after a little more polishing, but it does exactly what the title says. For tables with regular storage, only the master map globals will be exported and indices will be rebuilt when running the `ImportTable()` method.
+#### Physical export
+
+This one will likely find its way into the product after a little more polishing, but it does exactly what the title says: exporting the table definition and corresponding global data to an IRIS export file (XML). 
+For tables with regular storage, only the master map globals will be exported and indices will be rebuilt when running the `ImportTable()` method.
 
 ```ObjectScript
 do ##class(bdb.sql.StorageUtils).ExportTable("SQLUser.NATION","/tmp/table.xml.gz")
 ...
 do ##class(bdb.sql.StorageUtils).ImportTable("/tmp/table.xml.gz")
 ```
+
+#### Logical export
+
+If you need to dump a table's contents to a more portable format that adheres to simple SQL semantics, use `bdb.sql.Dump`, which supports the same set of parameters as IRIS SQL's `LOAD DATA` command:
+
+```ObjectScript
+do ##class(bdb.sql.Dump).Dump("SQLUser.NATION", "/tmp/table.csv")
+```
+or in SQL
+```SQL
+CALL bdb_sql.Dump('NATION', '/tmp/table.csv')
+```
+
 
 ## Stream utilities
 
