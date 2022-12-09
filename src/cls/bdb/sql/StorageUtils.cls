@@ -12,10 +12,14 @@ Class bdb.sql.StorageUtils
 /// <p>Exports the table definition and contents for <var>tableName</var> to <var>file</var>.
 /// If the supplied export <var>file</var> name ends with .gzip or .gz, the export file
 /// will be compressed automatically.</p>
+/// <p>For tables using default storage, this method will exclude indices and include a utility
+/// class to rebuild them automatically upon import using <method>ImportTable</method>.
+/// This can be overridden by setting the <var>excludeIndices</var> to 0, in which case the 
+/// corresponding globals will be included in the export file.</p>
 /// <p>This method will try to take a lock on any table extents while it exports them.</p>
-ClassMethod ExportTable(tableName As %String, file As %String, qspec As %String, Output excludesIndices As %Boolean) As %Status [ SqlName = ExportTable, SqlProc ]
+ClassMethod ExportTable(tableName As %String, file As %String, qspec As %String, ByRef excludeIndices As %Boolean) As %Status [ SqlName = ExportTable, SqlProc ]
 {
-	set sc = $$$OK, excludesIndices = 0
+	set sc = $$$OK
 	try {
 		return:'$SYSTEM.SQL.Schema.TableExists(tableName, .metadata) $$$ERROR($$$TableDoesNotExist, tableName)
 		set className = $lg(metadata,3), 
@@ -43,7 +47,8 @@ ClassMethod ExportTable(tableName As %String, file As %String, qspec As %String,
 			set:storage.IdLocation'="" export(storage.IdLocation_".GBL")=""
 			set:storage.VersionLocation'="" export(storage.VersionLocation_".GBL")=""
 
-			set excludesIndices = 1
+			// by default, try to exclude indices
+			set:'$d(excludeIndices) excludeIndices = 1
 
 		} else {
 
@@ -62,6 +67,8 @@ ClassMethod ExportTable(tableName As %String, file As %String, qspec As %String,
 				set export(rs.%Get("GlobalName")_".GBL") = ""
 			}
 
+			// can't guarantee this, so exclude
+			set excludeIndices = 0
 		}
 
 		// include related classes
@@ -75,7 +82,7 @@ ClassMethod ExportTable(tableName As %String, file As %String, qspec As %String,
 		
 		// if we excluded indices, create a small IndexBuilderUtility class we'll look for and
 		// run upon import
-		if excludesIndices {
+		if excludeIndices {
 			set ibuName = "bdb.sql.ibu.c"_$zcrc(tableName,7)
 			write:verbose !,"Creating Index Builder Utility class for table import: ",ibuName,!
 
@@ -122,8 +129,8 @@ ClassMethod ExportTable(tableName As %String, file As %String, qspec As %String,
 		// now export
 		set sc = $SYSTEM.OBJ.Export(.export, file, .qspec)
 
-		if excludesIndices && verbose {
-			write !,"Indices are NOT included.",
+		if excludeIndices && verbose {
+			write !,"Index globals are NOT included.",
 				 !,"Import using ##class(bdb.sql.StorageUtils).ImportTable() or ",
 				 !,"run 'BUILD INDEX FOR TABLE "_tableName_"' from a SQL prompt",
 				 !,"after regular import using %SYSTEM.OBJ",!
