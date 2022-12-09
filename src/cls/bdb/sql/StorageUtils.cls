@@ -10,14 +10,17 @@ Class bdb.sql.StorageUtils
 {
 
 /// <p>Exports the table definition and contents for <var>tableName</var> to <var>file</var>.
-/// If the supplied export <var>file</var> name ends with .gzip or .gz, the export file
+/// This is a <i>physical</i> export of the class definition and raw global data. When using
+/// the <var>dataOnly</var> flag to only export the latter, the storage definition of the target
+/// table in which to import must match <i>exactly</i> with the one for the source table.</p>
+/// <p>If the supplied export <var>file</var> name ends with .gzip or .gz, the export file
 /// will be compressed automatically.</p>
 /// <p>For tables using default storage, this method will exclude indices and include a utility
 /// class to rebuild them automatically upon import using <method>ImportTable</method>.
 /// This can be overridden by setting the <var>excludeIndices</var> to 0, in which case the 
 /// corresponding globals will be included in the export file.</p>
 /// <p>This method will try to take a lock on any table extents while it exports them.</p>
-ClassMethod ExportTable(tableName As %String, file As %String, qspec As %String, ByRef excludeIndices As %Boolean) As %Status [ SqlName = ExportTable, SqlProc ]
+ClassMethod ExportTable(tableName As %String, file As %String, qspec As %String, ByRef excludeIndices As %Boolean, dataOnly As %Boolean = 0) As %Status [ SqlName = ExportTable, SqlProc ]
 {
 	set sc = $$$OK
 	try {
@@ -28,7 +31,13 @@ ClassMethod ExportTable(tableName As %String, file As %String, qspec As %String,
 		$$$qualifierParseFull(sc,qspec,qstruct)
 		quit:$$$ISERR(sc)
 		set verbose = $$$qualifierGetValue(qstruct,"displaylog")
-		write:verbose !,"Exporting full table definition and contents for '",tableName,"'"
+		if verbose {
+			if dataOnly {
+ 				write !,"Exporting global data for table '",tableName,"'"
+			} else {
+				write !,"Exporting full table definition and global data for '",tableName,"'"
+			}
+		}
 
 		// first peek at storage and check if we can do with just the master map
 		set class = ##class(%Dictionary.ClassDefinition).%OpenId(className)
@@ -125,6 +134,16 @@ ClassMethod ExportTable(tableName As %String, file As %String, qspec As %String,
 			set locked(cls) = 1
 		}
 		quit:$$$ISERR(sc)
+
+		// remove classes (after locking) if we only want the data
+		if dataOnly {
+			set exp = ""
+			for {
+				set exp = $order(export(exp))
+				quit:exp=""
+				kill:$p(exp,".",*)="CLS" export(exp)
+			}
+		}
 		
 		// now export
 		set sc = $SYSTEM.OBJ.Export(.export, file, .qspec)
