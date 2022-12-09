@@ -12,7 +12,9 @@ Class bdb.sql.StorageUtils
 /// <p>Exports the table definition and contents for <var>tableName</var> to <var>file</var>.
 /// This is a <i>physical</i> export of the class definition and raw global data. When using
 /// the <var>dataOnly</var> flag to only export the latter, the storage definition of the target
-/// table in which to import must match <i>exactly</i> with the one for the source table.</p>
+/// table in which to import must match <i>exactly</i> with the one for the source table.
+/// See <class>bdb.sql.Dump</class> for an alternative that sticks to SQL semantics, exporting
+/// to CSV or SQL format.</p>
 /// <p>If the supplied export <var>file</var> name ends with .gzip or .gz, the export file
 /// will be compressed automatically.</p>
 /// <p>For tables using default storage, this method will exclude indices and include a utility

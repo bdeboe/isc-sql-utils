@@ -1,4 +1,13 @@
-/// Utility for dumping table data to a CSV or SQL (INSERT) file format
+/// <p>This utility dumps table data to a CSV or SQL (INSERT) file format so it can be imported into
+/// another database using <tt>LOAD DATA</tt> or DML import mechanisms.</p> 
+/// <p>This is a <i>logical</i> export mechanism that uses regular SQL semantics only and does not make 
+/// assumptions about the physical storage structure being the same on the target system. See the 
+/// <method>TableSize</method> in <class>bdb.sql.StorageUtils</class> for an example of such an 
+/// approach, which trades flexibility for performance.</p>
+/// <h3>Usage</h3>
+/// <example>
+///  do ##class(bdb.sql.Dump).Dump("Aviation.Event", "/tmp/export.csv")
+/// </example>
 Class bdb.sql.Dump
 {
 
@@ -27,7 +36,17 @@ ClassMethod DumpSQL(from As %String, file As %String, columns As %List = "", qua
     quit sc
 }
 
-/// columns( i ) = $lb( srcValue [ , header ] )
+/// <p>This method dumps the rows in table <var>from</var> to a file <var>file</var> in a format based
+/// on the extension of <var>file</var>: if its extension is either 'sql', 'dml' or 'ddl', the table
+/// data will be written as <tt>INSERT</tt> statements that can be executed right away. Any other extension will 
+/// lead to the file being written as a comma-separated values file.</p>
+/// <p>The <var>qualifiers</var> argument matches those available for the <tt>LOAD DATA</tt> command for specifying
+/// settings such as the column separator and output character set.</p>
+/// <p>The <var>columns</var> argument can be used to restrict or reorder the columns available in <var>from</var>
+/// that need to be written to <var>file</var>:
+/// <example>
+///  columns( i ) = $lb( srcValue [ , header ] )
+/// </example>
 ClassMethod Dump(from As %String, file As %String, ByRef columns, qualifiers As %DynamicObject = "")
 {
     set sc = $$$OK
