@@ -77,6 +77,21 @@ ClassMethod ScanFile(Output info, path As %String, qualifiers As %String = "", O
             do Log("INFO", "Read "_lines_" nonempty lines for sampling")
         }
 
+        // estimate total number of rows (if we didn't read all of them)
+        if 'file.AtEnd {
+            set totalLength = 0, lt = $l(file.LineTerminator)
+            for i = 1:1:lines {
+                set totalLength = totalLength + $l(^||lines(i)) + lt
+            }
+            if (file.Size <= 0) || 'totalLength {
+                do Log("WARNING", "Unable to estimate number of rows")
+            } else {
+                set info.estimatedLines = lines * ( file.Size / totalLength ) \ 1
+            }
+        } else {
+            set info.estimatedLines = lines
+        }
+
         // we can close the file now
         kill file
 
