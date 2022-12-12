@@ -5,27 +5,29 @@
 Class bdb.sql.InferSchema
 {
 
-/// The <method>qualifiers</method> passed into this method are assumed to follow the same
+/// <p>The <method>qualifiers</method> passed into this method are assumed to follow the same
 /// somewhat verbose format as <tt>LOAD DATA</tt>, meaning the ones relevant to file parsing
 /// are nested in <tt>from.file.*</tt> structure. The ones only relevant to this inferencing
-/// routine are simply at the root. For example:
+/// routine are simply at the root. For example:</p>
 /// <pre>
 ///  { 
 ///     "from": 
 ///         { 
 ///             "file": 
 ///                 {
-///                     "columnSeparator": ";"
+///                     "columnseparator": ";"
 ///                 }
 ///         },
 ///     "verbose": 1,
-///     "readLines": 1000
+///     "readlines": 1000
 ///  }
-///  </pre>
+/// </pre>
+/// <p>To read the whole file, set `readlines` to 0. This will ensure any proposed datatypes are
+/// generic enough for all the rows in the input file to match.</p>
 ClassMethod ScanFile(Output info, path As %String, qualifiers As %String = "", Output data) As %Status [ Internal ]
 {
     #define MaxLineLength 999999
-    kill data
+    kill data, ^||lines
     set sc = $$$OK, info = {}
     try {
         set qualifiers = $s(qualifiers="":{}, '$isobject(qualifiers):##class(%DynamicObject).%FromJSON(qualifiers), 1:qualifiers)
@@ -62,9 +64,9 @@ ClassMethod ScanFile(Output info, path As %String, qualifiers As %String = "", O
 
         // now start reading actual lines
         set lines = 0
-        while (lines < readLines) && 'file.AtEnd {
+        while (('readLines) || (lines < readLines)) && 'file.AtEnd {
             set lines = lines+1,
-                lines(lines) = $zstrip(file.ReadLine($$$MaxLineLength),"<>WC")
+                ^||lines(lines) = $zstrip(file.ReadLine($$$MaxLineLength),"<>WC")
         }
         if ('lines) {
             do Log("ERROR", "No lines to sample from")
@@ -89,7 +91,7 @@ ClassMethod ScanFile(Output info, path As %String, qualifiers As %String = "", O
 
             // find the candidate with lowest variance leading to more than 1 piece
             for i = 1:1:lines {
-                set line = $replace($replace(lines(i),quote_quote,""),"\"_quote,""),
+                set line = $replace($replace(^||lines(i),quote_quote,""),"\"_quote,""),
                     str = "", prevQuote = 0,
                     nextQuote = $find(line,quote)
                 while nextQuote {
@@ -101,7 +103,7 @@ ClassMethod ScanFile(Output info, path As %String, qualifiers As %String = "", O
                 } 
                 set str = str_$e(line,prevQuote,*)
                 for sep = ",",";","|",$c(9) {
-                    set pieces = $l(lines(i),sep) // TODO - could try to weed out the ones between ""
+                    set pieces = $l(^||lines(i),sep) // TODO - could try to weed out the ones between ""
                     set sep(sep) = $g(sep(sep)) + pieces, // sum
                         sep(sep, pieces) = $g(sep(sep, pieces)) + 1
                 }
@@ -171,7 +173,7 @@ ClassMethod ScanFile(Output info, path As %String, qualifiers As %String = "", O
 
         // parse lines
         for i = 1:1:lines {
-            set line = $replace(lines(i),"\"_quote,quote_quote),
+            set line = $replace(^||lines(i),"\"_quote,quote_quote),
                 pieces = $l(line, $$$qfSeparator),
                 (p, new) = 1, col = 0
             while p <= pieces {
@@ -342,6 +344,8 @@ ClassMethod ScanFile(Output info, path As %String, qualifiers As %String = "", O
         set logged=1
     }
     do:$$$ISERR(sc)&&'$g(logged) Log("ERROR","Error inferring schema from file: "_$system.Status.GetOneErrorText(sc))
+    
+    kill ^||lines
 
     quit sc
 
