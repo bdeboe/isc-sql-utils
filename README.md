@@ -22,6 +22,7 @@ Use at your own risk, or yell at me in the Issues section :-)
   - [Taking a snapshot of your Statement Index](#taking-a-snapshot-of-your-statement-index)
   - [Table Usage Stats](#table-usage-stats)
 - [Miscellaneous](#miscellaneous)
+  - [Inferring table structure](#inferring-table-structure)
   - [Generic table logging](#generic-table-logging)
   - [Adopting Extent Sets](#adopting-extent-sets)
   - [Projecting a table from a different namespace](#projecting-a-table-from-a-different-namespace)
@@ -108,6 +109,13 @@ do ##class(bdb.sql.StatementUtils).AddTableUsageStats("MySchema")
 
 
 ## Miscellaneous
+
+### Inferring table structure
+
+Often the first step in building out a demo or project is loading data from a source file into a table that has yet to be created. The `bdb.sql.InferSchema` class helps with that, including a one-stop-shop method that scans a directory, creates a table for each file in there and then loads it.
+```ObjectScript
+do ##class(bdb.sql.InferSchema).BuildAll("/tmp/data-dump/*.csv", { "verbose": 1, "targetSchema": "MySchema" })
+```
 
 ### Generic table logging
 

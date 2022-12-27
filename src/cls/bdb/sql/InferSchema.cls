@@ -1,7 +1,9 @@
-/// Basic class for inspecting a (CSV) file and inferring the probable datatypes for
-/// each column. Main entry points are <method>ScanFile</method>, which returns a 
+/// <p>Utility class for inspecting a (CSV) file and inferring the probable datatypes for
+/// each column. The main entry points are <method>ScanFile</method>, which returns a 
 /// <class>%DynamicObject</class> with anything we could glean from the file and
-/// <method>InferColumnList</method>, which structures that information in a DDL-ready format. 
+/// <method>InferColumnList</method>, which structures that information in a DDL-ready format.
+/// For a one-stop-shop method that scans all files in a directory, creates tables for them
+/// and then loads them, check <method>BuildAll</method></p>
 Class bdb.sql.InferSchema
 {
 
@@ -24,7 +26,7 @@ Class bdb.sql.InferSchema
 /// </pre>
 /// <p>To read the whole file, set `readlines` to 0. This will ensure any proposed datatypes are
 /// generic enough for all the rows in the input file to match.</p>
-ClassMethod ScanFile(Output info, path As %String, qualifiers As %String = "", Output data) As %Status [ Internal ]
+ClassMethod ScanFile(Output info, path As %String, qualifiers As %String = "", Output data) As %Status
 {
     #define MaxLineLength 999999
     kill data, ^||lines
@@ -408,18 +410,161 @@ ClassMethod InferColumnList(path As %String, qualifiers As %String = "") As %Str
 
         set sc = ..ScanFile(.info, path, qualifiers)
         quit:$$$ISERR(sc)
-        quit:'$isobject(info.columns)
-        set iterator = info.columns.%GetIterator(), i=1
-        while iterator.%GetNext(,.column) {
-            set str = str _ $s(str="":"", 1:", ") _ $s(column.name="":"Column"_i, 1:column.name) _ " " _ column.sqlType
-            set:$g(qf("strict"))&&'column.nullPct str = str _ " NOT NULL"
-            set i = i+1
-        }
+        set str = ..InferColumnListInternal(info, $g(qf("strict")))
 
     } catch (ex) {
         set sc = ex.AsStatus() 
     }
     quit str
+}
+
+ClassMethod InferColumnListInternal(info As %DynamicObject, strict As %Boolean = 0, namesOnly As %Boolean = 0) As %String [ Internal, Private ]
+{
+    quit:'$isobject(info.columns) ""
+    set iterator = info.columns.%GetIterator(), i=1, str=""
+    while iterator.%GetNext(,.column) {
+        set str = str _ $s(str="":"", 1:", ") _ $s(column.name="":"Column"_i, 1:column.name) 
+        set i = i+1
+        continue:namesOnly
+        set str = str _ " " _ column.sqlType
+        set:strict&&'column.nullPct str = str _ " NOT NULL"
+    }
+    quit str
+}
+
+/// <p>This one-stop-shop method scans the files in <var>path</var> (single filename or basic mask also accepted) and creates a 
+/// table for each of them based on the output of <method>ScanFile</method> if none exists. Then, it builds and executes 
+/// a <tt>LOAD DATA</tt> statement to load the table from the file. This method's optimistic implementation will skip
+/// tables for which errors are raised, but continues with tables that were successfully scanned and created.</p>
+/// <p>The <var>qualifiers</var> JSON string accepts the same arguments as other methods in this class, as well as an
+/// additional flag to specify the schema in which to look for or create the target tables:</p>
+/// <example>
+///  do ##class(bdb.sql.InferSchema).BuildAll("/tmp/data-dump/*.csv", { "verbose": 1, "targetSchema": "MySchema" })
+/// </example>
+ClassMethod BuildAll(path As %String, qualifiers As %String = "") As %Status [ SqlName = BuildSchemaFromPath, SqlProc ]
+{
+    set sc = $$$OK
+    try {
+        set qualifiers = $s(qualifiers="":{}, '$isobject(qualifiers):##class(%DynamicObject).%FromJSON(qualifiers), 1:qualifiers)
+        do ..FlattenQualifiers(.qf, qualifiers)
+        set verbose = +$g(qf("verbose"))
+        set targetSchema = $g(qf("targetschema"))
+        set info = {}  // not sure if we'll use this
+
+        // scan path
+        set pathSeparator = $s($$$isWINDOWS:"\",1:"/"),
+            files = 0
+        if ##class(%File).Exists(path) && '##class(%File).DirectoryExists(path) {
+            do Log("INFO","Found a single file '"_path_"'")
+            set files($i(files)) = path
+        } else {
+            if ##class(%File).DirectoryExists(path) {
+                set wildcard = "", queryPath = path
+            } else {
+                set wildcard = $piece(path, pathSeparator,*),
+                    queryPath = $piece(path,pathSeparator,1,*-1)
+            }
+            set rs = ##class(%SQL.Statement).%ExecDirect(,"CALL %Library.File_FileSet(?, ?,, ?)", queryPath, wildcard, 0)
+            while rs.%Next() {
+                set f = rs.%Get("Name")
+                if ##class(%File).DirectoryExists(f) {
+                    do Log("INFO","Skipping directory '"_f_"'")
+                    continue
+                }
+                do Log("INFO","Found file '"_f_"'")
+                set files($i(files)) = f
+            }
+        }
+        if 'files {
+            do Log("WARNING","No files found at '"_path_"', exiting")
+            quit
+        }
+
+        do Log()
+        do Log(,"Scanning "_files_" files...")
+
+        for i = 1:1:files {
+            kill scanInfo
+            do Log(,"Scanning file structure for '"_files(i)_"'")
+            set sc = ..ScanFile(.scanInfo, files(i), qualifiers)
+            set files(i,"info") = scanInfo
+            if $$$ISERR(sc) {
+                do Log("ERROR", "Error scanning file structure: "_$SYSTEM.Status.GetOneErrorText(sc))
+                continue
+            }
+
+            set tableName = $piece($piece(files(i), pathSeparator, *), ".", 1, *-1)
+            set:targetSchema'="" tableName = targetSchema_"."_tableName
+            set files(i,"tableName") = tableName
+
+            if $SYSTEM.SQL.Schema.TableExists(tableName) {
+                do Log(,"Using existing target table "_tableName)
+                continue
+            }
+
+            set ddl = "CREATE TABLE "_tableName_" ("_..InferColumnListInternal(scanInfo, $g(qf("strict")))_")"
+            do Log(,"Creating target table: "_$c(13,10,9)_ddl)
+            
+            set rs = ##class(%SQL.Statement).%ExecDirect(,ddl)
+            if rs.%SQLCODE {
+                do Log("ERROR","Error creating table: "_rs.%Message)
+                kill files(i,"tableName")
+            }
+
+            do Log()
+        }
+        set sc = $$$OK // continue with what worked
+
+        do Log()
+        do Log(,"Loading "_files_" tables...")
+
+        set totalRows = 0, totalTables = 0
+        for i = 1:1:files {
+            if '$d(files(i,"tableName")) {
+                do Log("WARNING", "No target table for file "_files(i)_", skipping...")
+                continue
+            }
+
+            set ddl = "LOAD BULK %NOJOURN DATA FROM FILE '"_files(i)_"'"_$c(13,10)
+            set ddl = ddl_$c(9)_"COLUMNS ("_..InferColumnListInternal(files(i,"info"))_")"_$c(13,10)
+            set ddl = ddl_$c(9)_"INTO "_files(i,"tableName")_" ("_..InferColumnListInternal(files(i,"info"),,1)_")"_$c(13,10)
+            set ddl = ddl_$c(9)_"USING "_files(i,"info").qualifiers.%ToJSON()
+
+            do Log(,"Loading into table: "_$c(13,10,9)_ddl)
+
+            set rs = ##class(%SQL.Statement).%ExecDirect(,ddl)
+            if rs.%SQLCODE {
+                do Log("ERROR","Error loading table: "_rs.%Message)
+            } else {
+                do Log(,"Loaded "_rs.%ROWCOUNT_" rows")
+                set totalRows = totalRows+rs.%ROWCOUNT, totalTables = totalTables+1
+            }
+
+            do Log()
+        }
+        do:totalTables>1 Log(,"Loaded "_totalRows_" records into "_totalTables_" tables")
+
+    } catch (ex) {
+        set sc = ex.AsStatus()
+        do Log("ERROR","Unexpected error occured: "_$system.Status.GetErrorText(sc))
+        set logged=1
+    }
+    do:$$$ISERR(sc)&&'$g(logged) Log("ERROR","Error building schema: "_$system.Status.GetOneErrorText(sc))
+    do Log()
+    quit sc
+
+Log(level="INFO", message="")
+    if verbose && ($g(message)="") {
+        write !
+    } else {
+        write:verbose !,$zdt($h)," - ",level,": ",message
+        // TODO: write to %SQL_Diag
+        if $isobject($g(info)) && (level'="INFO") && (level'="DEBUG") {
+            set:(info.errors="") info.errors = []
+            do info.errors.%Push({ "level": (level), "message": (message) })
+        }
+    }
+    quit
 }
 
 }
