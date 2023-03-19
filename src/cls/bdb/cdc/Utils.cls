@@ -4,7 +4,7 @@
 /// async reporting member is created to track the primary instance, on which a dejournaling filter
 /// will then use ^OBJ.DSTIME to log any changes, from where they can be consumed through mechanisms
 /// such as <class>%DeepSee.TimeSync</class>.
-/// <p>The <method>Generate</method> builds a <class>SYS.MirrorDejournal</class> that will track any
+/// <p>The <method>GenerateDSTIME</method> builds a <class>SYS.MirrorDejournal</class> that will track any
 /// updates to master maps of the set of tables identified in this table's extent. For those tables,
 /// any SET or KILL operations to their primary data global encountered in a journal file will cause
 /// an ^OBJ.DSTIME record to be written for consumption on the async member.</p>
@@ -15,7 +15,7 @@ Property namespace As %String [ InitialExpression = {$namespace} ];
 
 Property tableName As %String;
 
-ClassMethod Generate(dejournalFilterClassName As %String = "bdb.cdc.ZFilter", glorefType As %String(VALUELIST=",plain,namespace") = "plain", verbose As %Boolean = 1) As %Status
+ClassMethod GenerateDSTIME(dejournalFilterClassName As %String = "bdb.cdc.ZFilter", glorefType As %String(VALUELIST=",plain,namespace") = "plain", verbose As %Boolean = 1) As %Status
 {
     new $namespace
     set sc = $$$OK, originalNamespace = $namespace
@@ -57,7 +57,7 @@ ClassMethod Generate(dejournalFilterClassName As %String = "bdb.cdc.ZFilter", gl
         zn "%SYS"
 
         set code = 0
-        do Code("   quit:(RecordType'=""S"")||(RecordType'=""K"")")
+        do Code("   quit:(RecordType'=""S"")&&(RecordType'=""K"") 1")
         do Code("   set g = $p(GlobalReference,""("",1), id = $replace($e($p(GlobalReference,""("",*),1,*-1),"","",""||""), now=+$g(^OBJ.DSTIME)")
 
         set ns = "", ref = ""
