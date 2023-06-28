@@ -3,7 +3,7 @@
   <Document name="bdb-sql-utils.ZPM">
     <Module>
       <Name>bdb-sql-utils</Name>
-      <Version>0.5.6</Version>
+      <Version>0.5.7</Version>
       <Description>SQL cookbook for simple storage recipes and other SQL utilities. This is not an official InterSystems repository.</Description>
       <Packaging>module</Packaging>
       <SourcesRoot>src</SourcesRoot>
