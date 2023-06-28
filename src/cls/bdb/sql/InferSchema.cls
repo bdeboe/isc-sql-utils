@@ -146,6 +146,7 @@ ClassMethod ScanFile(Output info, path As %String, qualifiers As %String = "", O
                 for {
                     set pieces = $order(sep(sep,pieces),1,cnt)
                     quit:pieces=""
+                    quit:'pieces // we're beyond the numbers
                     set stddev = stddev + (((avg-pieces)**2)*cnt)
                 }
                 set (stddev,sep(sep,"stddev")) = $s(lines:$zsqr(stddev / lines),1:0)
@@ -186,6 +187,7 @@ ClassMethod ScanFile(Output info, path As %String, qualifiers As %String = "", O
             }
         } else {
             do Log("INFO","No header in this file")
+            set header="" // initialize as empty
         }
 
         // parse lines
