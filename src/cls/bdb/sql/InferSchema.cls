@@ -495,7 +495,7 @@ ClassMethod BuildAll(path As %String, qualifiers As %String = "") As %Status [ S
                 continue
             }
 
-            set tableName = $piece($piece(files(i), pathSeparator, *), ".", 1, *-1)
+            set tableName = $tr($piece($piece(files(i), pathSeparator, *), ".", 1, *-1),"- .","___")
             set:targetSchema'="" tableName = targetSchema_"."_tableName
             set files(i,"tableName") = tableName
 
@@ -552,6 +552,151 @@ ClassMethod BuildAll(path As %String, qualifiers As %String = "") As %Status [ S
         set logged=1
     }
     do:$$$ISERR(sc)&&'$g(logged) Log("ERROR","Error building schema: "_$system.Status.GetOneErrorText(sc))
+    do Log()
+    quit sc
+
+Log(level="INFO", message="")
+    if verbose && ($g(message)="") {
+        write !
+    } else {
+        write:verbose !,$zdt($h)," - ",level,": ",message
+        // TODO: write to %SQL_Diag
+        if $isobject($g(info)) && (level'="INFO") && (level'="DEBUG") {
+            set:(info.errors="") info.errors = []
+            do info.errors.%Push({ "level": (level), "message": (message) })
+        }
+    }
+    quit
+}
+
+/// <p>This method scans the files in <var>path</var> (single filename or basic mask also accepted) and creates a <a 
+/// href="https://docs.intersystems.com/irislatest/csp/docbook/DocBook.UI.Page.cls?KEY=GSQL_tables#GSQL_tables_foreign">Foreign
+/// Table</a> for each of them based on the output of <method>ScanFile</method>. A Foreign Server is also created representing
+/// the directory holding your files.</p>
+/// <p>The <var>qualifiers</var> JSON string accepts the same arguments as other methods in this class, as well as
+/// additional flags to specify the schema in which to look for or create the target tables, and the preferred name
+/// for the foreign server:</p>
+/// <example>
+///  do ##class(bdb.sql.InferSchema).CreateForeignTables("/tmp/data-dump/*.csv", { "verbose": 1, "targetSchema": "MySchema", "serverName": "MySchema.FServer" })
+/// </example>
+ClassMethod CreateForeignTables(path As %String, qualifiers As %String = "") As %Status [ SqlName = CreateForeignSchema, SqlProc ]
+{
+    set sc = $$$OK
+    try {
+        if $SYSTEM.Version.GetMajor()<2023 {
+            set sc = $$$ERROR($$$GeneralError, "Foreign Tables are not supported on this release: "_$SYSTEM.Version.GetNumber()_" (requires 2023.1)")
+            quit
+        }
+
+        set qualifiers = $s(qualifiers="":{}, '$isobject(qualifiers):##class(%DynamicObject).%FromJSON(qualifiers), 1:qualifiers)
+        do ..FlattenQualifiers(.qf, qualifiers)
+        set verbose = +$g(qf("verbose"))
+        set targetSchema = $g(qf("targetschema"))
+        set serverName = $g(qf("serverName"), $s(targetSchema="":"SQLUser",1:targetSchema)_".FServer")
+        set info = {}  // not sure if we'll use this
+
+        // scan path
+        set pathSeparator = $s($$$isWINDOWS:"\",1:"/"),
+            files = 0
+        if ##class(%File).Exists(path) && '##class(%File).DirectoryExists(path) {
+            do Log("INFO","Found a single file '"_path_"'")
+            set files($i(files)) = path,
+                queryPath = $piece(path,pathSeparator,1,*-1)
+        } else {
+            if ##class(%File).DirectoryExists(path) {
+                set wildcard = "", queryPath = path
+            } else {
+                set wildcard = $piece(path, pathSeparator,*),
+                    queryPath = $piece(path,pathSeparator,1,*-1)
+            }
+            set rs = ##class(%SQL.Statement).%ExecDirect(,"CALL %Library.File_FileSet(?, ?,, ?)", queryPath, wildcard, 0)
+            while rs.%Next() {
+                set f = rs.%Get("Name")
+                if ##class(%File).DirectoryExists(f) {
+                    do Log("INFO","Skipping directory '"_f_"'")
+                    continue
+                }
+                do Log("INFO","Found file '"_f_"'")
+                set files($i(files)) = f
+            }
+        }
+        if 'files {
+            do Log("WARNING","No files found at '"_path_"', exiting")
+            quit
+        }
+
+        // create foreign server
+        set rs = ##class(%SQL.Statement).%ExecDirect(,"SELECT COUNT(*) FROM INFORMATION_SCHEMA.FOREIGN_SERVERS WHERE SERVER_SCHEMA = ? AND SERVER_NAME = ?", $s($l(serverName,".")>1:$p(serverName,".",1), 1:"SQLUser"), $p(serverName,".",*))
+        if (rs.%Next() && rs.%GetData(1)) {
+            do Log("INFO", "Foreign Server "_serverName_" already exists, reusing...")
+        } else {
+            set ddl = "CREATE FOREIGN SERVER "_serverName_" FOREIGN DATA WRAPPER CSV "_$c(13,10,9,9)_" HOST '"_queryPath_"'"
+            do Log("INFO","Creating Foreign Server: "_$c(13,10,9)_ddl)
+
+            set rs = ##class(%SQL.Statement).%ExecDirect(,ddl)
+            if rs.%SQLCODE {
+                
+                if ($SYSTEM.Version.GetMajor()>2023) || ($SYSTEM.Version.GetMinor()=3) {
+                    do Log("ERROR","Error creating Foreign Server: "_rs.%Message)
+                    quit
+                } else {
+                    // catalog query doesn't exist yet prior to 2023.3, so try proceeding on earlier versions
+                    do Log("WARNING", "Error creating Foreign Server, assuming it exists")
+                }
+
+            } else {
+                do Log("INFO", "Foreign Server "_serverName_" created successfully")
+            }
+        }
+
+        do Log()
+        do Log(,"Scanning "_files_" files...")
+
+        set totalTables = 0
+        for i = 1:1:files {
+            kill scanInfo
+            do Log(,"Scanning file structure for '"_files(i)_"'")
+            set sc = ..ScanFile(.scanInfo, files(i), qualifiers)
+            set files(i,"info") = scanInfo
+            if $$$ISERR(sc) {
+                do Log("ERROR", "Error scanning file structure: "_$SYSTEM.Status.GetOneErrorText(sc))
+                continue
+            }
+
+            set tableName = $tr($piece($piece(files(i), pathSeparator, *), ".", 1, *-1),"- .","___")
+            set:targetSchema'="" tableName = targetSchema_"."_tableName
+            set files(i,"tableName") = tableName
+
+            if $SYSTEM.SQL.Schema.TableExists(tableName) {
+                do Log(,"Table "_tableName_" already exists, skipping")
+                continue
+            }
+
+            set ddl = "CREATE FOREIGN TABLE "_tableName_" ("_..InferColumnListInternal(scanInfo)_") "_$c(13,10,9,9)
+                        _" SERVER "_serverName_$c(13,10,9,9)
+                        _" FILE '"_$piece(files(i), pathSeparator, *)_"' "_$c(13,10,9,9)
+                        _" USING "_files(i,"info").qualifiers.%ToJSON()
+            do Log(,"Creating target table: "_$c(13,10,9)_ddl)
+            
+            set rs = ##class(%SQL.Statement).%ExecDirect(,ddl)
+            if rs.%SQLCODE {
+                do Log("ERROR","Error creating table: "_rs.%Message)
+                kill files(i,"tableName")
+            } else {
+                set totalTables = totalTables+1
+            }
+
+            do Log()
+        }
+        set sc = $$$OK
+        do:totalTables>1 Log(,"Created "_totalTables_" foreign tables")
+
+    } catch (ex) {
+        set sc = ex.AsStatus()
+        do Log("ERROR","Unexpected error occured: "_$system.Status.GetErrorText(sc))
+        set logged=1
+    }
+    do:$$$ISERR(sc)&&'$g(logged) Log("ERROR","Error creating foreign schema: "_$system.Status.GetOneErrorText(sc))
     do Log()
     quit sc
 

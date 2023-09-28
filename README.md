@@ -117,6 +117,11 @@ Often the first step in building out a demo or project is loading data from a so
 do ##class(bdb.sql.InferSchema).BuildAll("/tmp/data-dump/*.csv", { "verbose": 1, "targetSchema": "MySchema" })
 ```
 
+Alternatively, on IRIS 2023.1 and above, you can create <a href="https://docs.intersystems.com/irislatest/csp/docbook/DocBook.UI.Page.cls?KEY=GSQL_tables#GSQL_tables_foreign">Foreign Tables</a> for one or more files using the following command:
+```ObjectScript
+do ##class(bdb.sql.InferSchema).CreateForeignTables("/tmp/data-dump/*.csv", { "verbose": 1, "targetSchema": "MySchema", "serverName": "MySchema.FServer" })
+```
+
 ### Generic table logging
 
 Many customers leverage Triggers to automatically log updates to a row as kind of an application-level audit facility. This utility class will automatically generate an UPDATE/DELETE trigger for logging any field changes to the `bdb.logme.Log`. All you need to do is have your `%Persistent` class inherit from `bdb.logme.Trigger` and the proper trigger code will be generated for you. See the class reference for more details on fine-tuning the default behaviour.
