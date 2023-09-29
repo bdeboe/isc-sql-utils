@@ -121,6 +121,10 @@ Alternatively, on IRIS 2023.1 and above, you can create <a href="https://docs.in
 ```ObjectScript
 do ##class(bdb.sql.InferSchema).CreateForeignTables("/tmp/data-dump/*.csv", { "verbose": 1, "targetSchema": "MySchema", "serverName": "MySchema.FServer" })
 ```
+or
+```SQL
+CALL bdb_sql.CreateForeignTables('/tmp/data-dump/*.csv', '{ "verbose": 1, "targetSchema": "MySchema", "serverName": "MySchema.FServer" }')
+```
 
 ### Generic table logging
 

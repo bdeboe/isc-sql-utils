@@ -579,7 +579,7 @@ Log(level="INFO", message="")
 /// <example>
 ///  do ##class(bdb.sql.InferSchema).CreateForeignTables("/tmp/data-dump/*.csv", { "verbose": 1, "targetSchema": "MySchema", "serverName": "MySchema.FServer" })
 /// </example>
-ClassMethod CreateForeignTables(path As %String, qualifiers As %String = "") As %Status [ SqlName = CreateForeignSchema, SqlProc ]
+ClassMethod CreateForeignTables(path As %String, qualifiers As %String = "") As %Status [ SqlName = CreateForeignTables, SqlProc ]
 {
     set sc = $$$OK
     try {
