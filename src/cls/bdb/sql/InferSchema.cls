@@ -674,7 +674,7 @@ ClassMethod CreateForeignTables(path As %String, qualifiers As %String = "") As 
 
             set ddl = "CREATE FOREIGN TABLE "_tableName_" ("_..InferColumnListInternal(scanInfo)_") "_$c(13,10,9,9)
                         _" SERVER "_serverName_$c(13,10,9,9)
-                        _" FILE '"_$piece(files(i), pathSeparator, *)_"' "_$c(13,10,9,9)
+                        _" FILE '"_$piece(files(i), pathSeparator, *)_"' COLUMNS ("_..InferColumnListInternal(scanInfo)_")"_$c(13,10,9,9)
                         _" USING "_files(i,"info").qualifiers.%ToJSON()
             do Log(,"Creating target table: "_$c(13,10,9)_ddl)
             
