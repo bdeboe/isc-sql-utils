@@ -488,7 +488,7 @@ ClassMethod BuildAll(path As %String, qualifiers As %String = "") As %Status [ S
         for i = 1:1:files {
             kill scanInfo
             do Log(,"Scanning file structure for '"_files(i)_"'")
-            set sc = ..ScanFile(.scanInfo, files(i), qualifiers)
+            set sc = ..ScanFile(.scanInfo, files(i), qualifiers.%ToJSON())
             set files(i,"info") = scanInfo
             if $$$ISERR(sc) {
                 do Log("ERROR", "Error scanning file structure: "_$SYSTEM.Status.GetOneErrorText(sc))
@@ -656,7 +656,7 @@ ClassMethod CreateForeignTables(path As %String, qualifiers As %String = "") As 
         for i = 1:1:files {
             kill scanInfo
             do Log(,"Scanning file structure for '"_files(i)_"'")
-            set sc = ..ScanFile(.scanInfo, files(i), qualifiers)
+            set sc = ..ScanFile(.scanInfo, files(i), qualifiers.%ToJSON())
             set files(i,"info") = scanInfo
             if $$$ISERR(sc) {
                 do Log("ERROR", "Error scanning file structure: "_$SYSTEM.Status.GetOneErrorText(sc))
