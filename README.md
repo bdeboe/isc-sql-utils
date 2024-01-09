@@ -13,20 +13,24 @@ zpm install bdb-sql-utils
 
 Use at your own risk, or yell at me in the Issues section :-)
 
-- [Storage Utilities](#storage-utilities)
-  - [Table Storage Consumption](#table-storage-consumption)
-  - [Exporting a table and its contents](#exporting-a-table-and-its-contents)
-- [Stream utilities](#stream-utilities)
-  - [Compressing existing stream data](#compressing-existing-stream-data)
-- [Statement Index utilities](#statement-index-utilities)
-  - [Taking a snapshot of your Statement Index](#taking-a-snapshot-of-your-statement-index)
-  - [Table Usage Stats](#table-usage-stats)
-- [Miscellaneous](#miscellaneous)
-  - [Inferring table structure](#inferring-table-structure)
-  - [Generic table logging](#generic-table-logging)
-  - [Adopting Extent Sets](#adopting-extent-sets)
-  - [Projecting a table from a different namespace](#projecting-a-table-from-a-different-namespace)
-  - [Projecting a "list of" collection property](#projecting-a-list-of-collection-property)
+- [IRIS SQL Utilities](#iris-sql-utilities)
+  - [Storage Utilities](#storage-utilities)
+    - [Table Storage Consumption](#table-storage-consumption)
+    - [Exporting a table and its contents](#exporting-a-table-and-its-contents)
+      - [Physical export](#physical-export)
+      - [Logical export](#logical-export)
+  - [Stream utilities](#stream-utilities)
+    - [Compressing existing stream data](#compressing-existing-stream-data)
+  - [Statement Index utilities](#statement-index-utilities)
+    - [Taking a snapshot of your Statement Index](#taking-a-snapshot-of-your-statement-index)
+    - [Table Usage Stats](#table-usage-stats)
+  - [Miscellaneous](#miscellaneous)
+    - [Inferring table structure](#inferring-table-structure)
+    - [Generic table logging](#generic-table-logging)
+    - [Adopting Extent Sets](#adopting-extent-sets)
+    - [Projecting a table from a different namespace](#projecting-a-table-from-a-different-namespace)
+    - [Projecting a "list of" collection property](#projecting-a-list-of-collection-property)
+    - [Foreign Tables Utilities](#foreign-tables-utilities)
 
 
 ## Storage Utilities
@@ -172,3 +176,16 @@ Before 2022.1, only array-style collection properties support [projecting as a t
 ```ObjectScript
 write ##class(bdb.sql.CollectionUtils).BuildProjection("Sample.Person","FavoriteColors")
 ```
+
+### Foreign Tables Utilities
+
+After creating a [Foreign Server](https://docs.intersystems.com/irislatest/csp/docbook/DocBook.UI.Page.cls?KEY=GSQL_tables#GSQL_tables_foreign), you can use this stored procedure to send any query to that Foreign Server.
+
+```SQL
+CREATE FOREIGN SERVER MyServer FOREIGN DATA WRAPPER JDBC CONNECTION 'SomeConnection';
+
+CALL bdb_sql.ForeignQuery('MyServer', 'SELECT xyz FROM t WHERE SomeSpecialSyntax(f2) > 0');
+```
+
+Notes:
+* only `CALL` syntax is supported
