@@ -1,0 +1,18 @@
+/// Use or operation of this code is subject to acceptance of the license available in the code repository for this code.
+/// This is a sample embeddable class representing an address.
+Class Sample.Address Extends (%SerialObject, %Populate, %XML.Adaptor) 
+{
+/// The street address.
+Property Street As %String(MAXLEN = 80, POPSPEC = "Street()");
+
+/// The city name.
+Property City As %String(MAXLEN = 80, POPSPEC = "City()");
+
+/// The 2-letter state abbreviation.
+Property State As %String(MAXLEN = 2, POPSPEC = "USState()");
+
+/// The 5-digit U.S. Zone Improvement Plan (ZIP) code.
+Property Zip As %String(MAXLEN = 5, POPSPEC = "USZip()");
+
+}
+

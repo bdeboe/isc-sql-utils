@@ -1,0 +1,19 @@
+    zn "%SYS"
+
+    // ** Comment out these two line for Production use **
+    do ##class(Security.Users).UnExpireUserPasswords("*")
+    zpm "install passwordless"
+
+    zn "USER"
+
+    //  load samples
+    do $System.OBJ.Load("/home/irisowner/dev/Build.DataSample.XML","ck",.err)
+    do ##class(Build.DataSample).run("/home/irisowner/dev/samples",1)
+
+    // Create /_vscode web app to support intersystems-community.testingmanager VS Code extension
+    zpm "install vscode-per-namespace-settings"
+    zpm "install webterminal"
+
+    zpm "load /home/irisowner/dev/ -v":1
+
+    halt
