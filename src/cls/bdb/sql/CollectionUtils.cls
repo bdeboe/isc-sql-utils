@@ -4,7 +4,7 @@
 /// <li><method>BuildProjection</method></li>
 /// <li><method>CreateMappedTable</method></li>
 /// </ol>
-Class SQL.CollectionUtils
+Class bdb.sql.CollectionUtils
 {
 
 /// Builds a read-only table definition projecting the elements of list property

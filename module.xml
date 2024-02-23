@@ -3,12 +3,23 @@
   <Document name="bdb-sql-utils.ZPM">
     <Module>
       <Name>bdb-sql-utils</Name>
-      <Version>0.1.0</Version>
-      <Description>SQL cookbook for simple storage recipes. This is not an official InterSystems repository.</Description>
+      <Version>0.7.1</Version>
+      <Description>SQL cookbook for simple storage recipes and other SQL utilities. This is not an official InterSystems repository.</Description>
       <Packaging>module</Packaging>
       <SourcesRoot>src</SourcesRoot>
-      <Resource Name="SQL.CollectionUtils.CLS"/>
-      <Resource Name="SQL.StorageUtils.CLS"/>
+      <Resource Name="bdb.cdc.Utils.CLS"/>
+      <Resource Name="bdb.logme.Log.CLS"/>
+      <Resource Name="bdb.logme.LogField.CLS"/>
+      <Resource Name="bdb.logme.PropertyClass.CLS"/>
+      <Resource Name="bdb.logme.Trigger.CLS"/>
+      <Resource Name="bdb.sql.CollectionUtils.CLS"/>
+      <Resource Name="bdb.sql.Dump.CLS"/>
+      <Resource Name="bdb.sql.ForeignUtils.CLS"/>
+      <Resource Name="bdb.sql.ForeignUtilsRS.CLS"/>
+      <Resource Name="bdb.sql.InferSchema.CLS"/>
+      <Resource Name="bdb.sql.StatementUtils.CLS"/>
+      <Resource Name="bdb.sql.StorageUtils.CLS"/>
+      <Resource Name="bdb.sql.StreamUtils.CLS"/>
     </Module>
   </Document>
 </Export>
