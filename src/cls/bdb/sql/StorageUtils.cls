@@ -1200,4 +1200,40 @@ ClassMethod PopulateFromStats(tableName As %String, rowCount As %Integer = 1000,
 	quit sc
 }
 
+/// <p>This experimental method tries to verify whether the index <var>indexname</var> in class <var>classname</var>
+/// is empty, meaning it has just been added to the class and still needs building.</p>
+/// <p>This method does not verify whether the index is fully populated and entries are correct.  
+/// You can use <method>%ValidateIndices</method> for that purpose.</p>
+ClassMethod IndexHasData(classname As %String, indexname As %String, Output status As %Status) As %Boolean [ Internal, SqlName = IndexHasData, SqlProc ]
+{
+	set status = $$$OK, hasData = 0
+	try {
+
+		set cls = ##class(%Dictionary.CompiledClass).%OpenId(classname,, .status)
+		quit:'$isobject(cls)
+		set ss = ##class(%Dictionary.StorageDefinition).%OpenId(classname_"||"_cls.StorageStrategy,, .status)
+		quit:'$isobject(ss)
+		if (ss.Type = "%Storage.Persistent") {
+
+			// use SQL lookup to address case sensitivity
+			set location = "", parent = classname_"||"_ss.Name
+			&SQL(SELECT Location INTO :location FROM %Dictionary.CompiledStorageIndex WHERE parent = :parent AND UPPER(Name) = UPPER(:indexname))
+			if (SQLCODE'= 0) || (location = "") {
+				set status = $$$ERROR($$$GeneralError, "Unable to find index '"_indexname_"' in class '"_classname_"' - "_SQLCODE)
+				quit
+			}
+			
+			set hasData = $d(@location)>0
+
+		} else {
+			set status = $$$ERROR($$$GeneralError, "Unsupported storage type: '"_ss.Type_"'")
+			quit
+		}
+
+	} catch (e) {
+		set status = e.AsStatus()
+	}
+	return hasData
+}
+
 }
