@@ -768,11 +768,13 @@ ClassMethod AddRelated(def As %Dictionary.ClassDefinition, ByRef classes, includ
 }
 
 /// Simple method to retrieve the storage consumption of your IRIS SQL table
-ClassMethod TableSize(tableName As %String = "", Output info, fast As %Boolean = 0, verbose As %Boolean = 1) As %Status
+ClassMethod TableSize(tableName As %String = "", Output info, fast As %Integer = 2, verbose As %Boolean = 1) As %Status
 {
 	kill info
     set sc = $$$OK
     try {
+		// revert to simple fast flag prior to 2023.3
+		set:(fast=2)&&(($SYSTEM.Version.GetMajor()<2023)||($SYSTEM.Version.GetMinor()<3)) fast=1
 
         if ('$system.SQL.Schema.TableExists(tableName, .metadata)) || ($ld(metadata,3)="") {
 			set sc = $$$ERROR($$$TableDoesNotExist, tableName)
@@ -872,11 +874,11 @@ Warn(message, level="WARNING")
 }
 
 /// SQL Query wrapper for <method>TableSize</method>
-Query TableSizeSQL(tableName As %String, fastSize As %Boolean = 0, showWarnings As %Boolean = 0) As %Query(ROWSPEC = "global:%String,allocatedMB:%Numeric,usedMB:%Numeric") [ SqlName = TableSize, SqlProc ]
+Query TableSizeSQL(tableName As %String, fastSize As %Integer = 0, showWarnings As %Boolean = 0) As %Query(ROWSPEC = "global:%String,allocatedMB:%Numeric,usedMB:%Numeric") [ SqlName = TableSize, SqlProc ]
 {
 }
 
-ClassMethod TableSizeSQLExecute(ByRef qHandle As %Binary, tableName As %String, fastSize As %Boolean = 0, showWarnings As %Boolean = 0) As %Status [ Internal, ServerOnly = 1 ]
+ClassMethod TableSizeSQLExecute(ByRef qHandle As %Binary, tableName As %String, fastSize As %Integer = 0, showWarnings As %Boolean = 0) As %Status [ Internal, ServerOnly = 1 ]
 {
 	kill qHandle
 	set sc = ..TableSize(tableName, .info, fastSize, 0)
