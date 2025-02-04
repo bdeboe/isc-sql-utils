@@ -774,7 +774,7 @@ ClassMethod TableSize(tableName As %String = "", Output info, fast As %Boolean =
     set sc = $$$OK
     try {
 
-        if '$system.SQL.Schema.TableExists(tableName, .metadata) {
+        if ('$system.SQL.Schema.TableExists(tableName, .metadata)) || ($ld(metadata,3)="") {
 			set sc = $$$ERROR($$$TableDoesNotExist, tableName)
 			quit
 		}
@@ -786,8 +786,10 @@ ClassMethod TableSize(tableName As %String = "", Output info, fast As %Boolean =
 		if rs.%Next() && rs.%GetData(1) {
 			do Warn("Table is involved in parent-child relationships. Result may not be accurate.")
 		}
-
-		set storageName = ##class(%Dictionary.CompiledClass).%OpenId(className).StorageStrategy
+		
+		set classs = ##class(%Dictionary.CompiledClass).%OpenId(className)
+		goto:classs="" end // silently end if there is no storage
+		set storageName = classs.StorageStrategy
 		set storage = ##class(%Dictionary.CompiledStorage).%OpenId(className_"||"_storageName)
 		if storage.Type'="%Storage.Persistent" {
 			do Warn("Table storage type '"_storage.Type_"' is not fully supported. Result may not be accurate.")
@@ -847,8 +849,9 @@ ClassMethod TableSize(tableName As %String = "", Output info, fast As %Boolean =
 			}
 		}
 
-		set info("total","allocated") = totalAllocated,
-			info("total","used") = totalUsed
+end
+		set info("total","allocated") = +$g(totalAllocated),
+			info("total","used") = +$g(totalUsed)
 
         write:verbose !!,"Total size: "_totalAllocated_" allocated, "_totalUsed_" used",!
 
